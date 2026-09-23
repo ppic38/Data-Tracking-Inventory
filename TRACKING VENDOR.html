@@ -1,0 +1,2224 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Data Tracking Stock dari Vendor ke DC</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap');
+  :root{
+    --bg:#F3F1EC; --surface:#FFFFFF; --ink:#24261F; --ink-soft:#6B6C62; --ink-faint:#93938A;
+    --line:#E1DCCF; --accent:#2F3E77; --accent-soft:#E7E9F4;
+    --critical-bg:#FBE7E4; --critical-fg:#A5301F; --critical-strong:#C1392B;
+    --crit2-bg:#FCEFDD; --crit2-fg:#9C6A18;
+    --crit1-bg:#FCF6DA; --crit1-fg:#8A7A14;
+    --over-bg:#EAF0E7; --over-fg:#4F6B4F; --normal-bg:#EDF1F5; --normal-fg:#46617A;
+    --neutral-bg:#EFEDE6; --neutral-fg:#6B6B62;
+    --late-bg:#FBE7E4; --late-fg:#A5301F;
+    --pending-bg:#EDF1F5; --pending-fg:#46617A;
+    --ontime-bg:#EAF0E7; --ontime-fg:#4F6B4F;
+  }
+  *{ box-sizing:border-box; }
+  body{ margin:0; font-family:'Inter',sans-serif; color:var(--ink); background:var(--bg); }
+  .dash-root{ max-width:1020px; margin:0 auto; padding:28px 20px 60px; }
+  .eyebrow{ font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.12em; color:var(--accent); font-weight:600; }
+  .title{ font-family:'Space Grotesk',sans-serif; font-size:24px; font-weight:700; margin:2px 0 0; }
+  .dash-header{ display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap; margin-bottom:16px; }
+  .header-actions{ display:flex; align-items:center; gap:10px; }
+  .updated-at{ font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--ink-faint); }
+  .refresh-btn{ display:flex; align-items:center; gap:6px; font-size:12.5px; font-weight:600;
+    background:var(--accent); color:#F4F3EE; border:none; padding:8px 13px; border-radius:8px; cursor:pointer; }
+  .refresh-btn:disabled{ opacity:.6; cursor:default; }
+  .upload-btn{ display:flex; align-items:center; gap:6px; font-size:12.5px; font-weight:600;
+    background:var(--surface); color:var(--accent); border:1px solid var(--accent); padding:8px 13px;
+    border-radius:8px; cursor:pointer; font-family:'Inter',sans-serif; }
+  .offline-badge{ display:inline-flex; align-items:center; gap:6px; background:var(--accent-soft); color:var(--accent);
+    font-size:11px; font-weight:600; padding:4px 10px; border-radius:20px; font-family:'IBM Plex Mono',monospace; }
+  .spin{ display:inline-block; animation:spin 1s linear infinite; }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+  .error-banner{ display:flex; gap:8px; align-items:center; background:var(--critical-bg); color:var(--critical-fg);
+    font-size:13px; padding:10px 12px; border-radius:8px; margin-bottom:12px; }
+  .tabs{ display:flex; gap:6px; border-bottom:1px solid var(--line); margin-bottom:16px; flex-wrap:wrap; }
+  .tab-btn{ font-size:13.5px; font-weight:600; color:var(--ink-soft); background:none; border:none;
+    padding:9px 4px; cursor:pointer; border-bottom:2px solid transparent; display:flex; align-items:center;
+    gap:7px; margin-right:14px; font-family:'Inter',sans-serif; }
+  .tab-btn.active{ color:var(--accent); border-bottom-color:var(--accent); }
+  .tab-count{ background:var(--critical-strong); color:#fff; font-size:10.5px; font-weight:700;
+    padding:1px 6px; border-radius:20px; font-family:'IBM Plex Mono',monospace; }
+  .metrics-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:9px; margin-bottom:16px; }
+  .metric-card{ background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:12px 14px; }
+  .metric-icon{ color:var(--accent); margin-bottom:6px; font-size:16px; }
+  .metric-value{ font-family:'IBM Plex Mono',monospace; font-size:20px; font-weight:600; }
+  .metric-label{ font-size:11px; color:var(--ink-soft); margin-top:2px; }
+  .tone-critical .metric-icon, .tone-critical .metric-value{ color:var(--critical-strong); }
+
+  .filter-bar{ display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; align-items:center; }
+  .filter-bar-row{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; width:100%; }
+  .search-wrap{ position:relative; flex:1 1 220px; min-width:180px; }
+  .search-wrap input{ width:100%; font-size:13px; padding:9px 10px 9px 32px; border:1px solid var(--line);
+    border-radius:8px; background:var(--surface); color:var(--ink); font-family:'Inter',sans-serif; }
+  .search-wrap input:focus, .control:focus{ outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+  .search-wrap .icon{ position:absolute; left:9px; top:10px; color:var(--ink-faint); }
+  .control{
+    font-size:12.5px; font-weight:500; font-family:'Inter',sans-serif; color:var(--ink);
+    background-color:var(--surface); border:1px solid var(--line); border-radius:8px;
+    padding:9px 11px; cursor:pointer; line-height:1.2;
+  }
+  select.control{
+    appearance:none; -webkit-appearance:none; -moz-appearance:none;
+    padding-right:30px;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'><path d='M0 0l5 6 5-6z' fill='%2393938A'/></svg>");
+    background-repeat:no-repeat; background-position:right 11px center; background-size:9px 6px;
+  }
+  input[type=date].control{ font-family:'IBM Plex Mono',monospace; font-size:12px; }
+  select.control.wide{ min-width:250px; }
+  .filter-label{ font-size:11px; color:var(--ink-faint); font-weight:600; text-transform:uppercase;
+    letter-spacing:.04em; margin-right:-3px; }
+  .reset-btn{ font-size:12px; color:var(--accent); background:none; border:none; cursor:pointer; font-weight:600;
+    padding:9px 4px; }
+  .multiselect{ position:relative; }
+  .multiselect-btn{ font-size:12.5px; padding:9px 11px; border:1px solid var(--line); border-radius:8px;
+    background:var(--surface); color:var(--ink); font-family:'Inter',sans-serif; cursor:pointer;
+    display:flex; align-items:center; gap:6px; white-space:nowrap; }
+  .ms-caret{ font-size:10px; color:var(--ink-faint); }
+  .multiselect-panel{ position:absolute; top:calc(100% + 4px); left:0; z-index:20; background:var(--surface);
+    border:1px solid var(--line); border-radius:9px; box-shadow:0 6px 20px rgba(0,0,0,.10); padding:6px;
+    min-width:190px; max-height:260px; overflow-y:auto; }
+  .ms-option{ display:flex; align-items:center; gap:8px; font-size:12.5px; padding:6px 7px; border-radius:6px;
+    cursor:pointer; }
+  .ms-option:hover{ background:var(--neutral-bg); }
+  .ms-option input{ margin:0; }
+  .ms-empty{ font-size:12px; color:var(--ink-faint); padding:6px 7px; }
+  .result-count{ font-size:12px; color:var(--ink-faint); margin-bottom:10px; }
+
+  .item-list{ display:flex; flex-direction:column; gap:8px; }
+  .item-row{ background:var(--surface); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+  .item-row-head{ display:flex; align-items:center; gap:11px; padding:11px 13px; cursor:pointer; flex-wrap:wrap; }
+  .item-row-head.static{ cursor:default; }
+  .swatch{ width:16px; height:16px; border-radius:4px; flex-shrink:0; border:1px solid rgba(0,0,0,.12); }
+  .item-name{ font-family:'IBM Plex Mono',monospace; font-size:12.5px; font-weight:600; }
+  .item-sub{ font-size:10.5px; color:var(--ink-faint); margin-top:2px; }
+  .item-tags{ display:flex; gap:5px; margin-top:3px; flex-wrap:wrap; }
+  .tag{ font-size:10px; color:var(--ink-soft); background:var(--neutral-bg); padding:1px 6px; border-radius:5px; }
+  .item-main{ flex:1; min-width:150px; }
+  .item-metrics{ display:flex; gap:7px; flex-shrink:0; }
+  .im-col{ text-align:center; min-width:54px; background:var(--neutral-bg); border-radius:7px; padding:5px 9px; }
+  .im-lab{ font-size:8.5px; color:var(--ink-faint); text-transform:uppercase; letter-spacing:.03em; margin-bottom:2px; }
+  .im-val{ font-family:'IBM Plex Mono',monospace; font-size:11.5px; font-weight:600; }
+  .badge{ font-size:10.5px; font-weight:600; padding:3px 8px; border-radius:20px; white-space:nowrap; }
+  .badge-critical{ background:var(--critical-bg); color:var(--critical-fg); }
+  .badge-crit2{ background:var(--crit2-bg); color:var(--crit2-fg); }
+  .badge-crit1{ background:var(--crit1-bg); color:var(--crit1-fg); }
+  .badge-over{ background:var(--over-bg); color:var(--over-fg); }
+  .badge-normal{ background:var(--normal-bg); color:var(--normal-fg); }
+  .badge-neutral{ background:var(--neutral-bg); color:var(--neutral-fg); }
+  .badge-late{ background:var(--late-bg); color:var(--late-fg); }
+  .badge-pending{ background:var(--pending-bg); color:var(--pending-fg); }
+  .badge-ontime{ background:var(--ontime-bg); color:var(--ontime-fg); }
+  .chev{ color:var(--ink-faint); flex-shrink:0; }
+  .item-detail{ border-top:1px solid var(--line); padding:10px 13px 13px 40px; background:#FBFAF7; overflow-x:auto; }
+  .koli-table{ width:100%; border-collapse:collapse; font-size:12px; min-width:600px; }
+  .koli-table th{ text-align:left; font-size:10px; color:var(--ink-faint); text-transform:uppercase;
+    letter-spacing:.03em; padding:4px 8px; font-weight:600; }
+  .koli-table td{ padding:5px 8px; border-top:1px solid var(--line); font-family:'IBM Plex Mono',monospace; font-size:11.5px; }
+  .empty-state{ text-align:center; padding:40px 20px; color:var(--ink-faint); }
+  .priority-divider{ font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.08em; color:var(--ink-faint);
+    text-transform:uppercase; margin:18px 0 8px; padding-bottom:5px; border-bottom:1px solid var(--line); }
+  .priority-divider:first-child{ margin-top:0; }
+  .pri-strip{ width:4px; flex-shrink:0; align-self:stretch; border-radius:3px; margin-right:3px; }
+  .pri-strip.pri-0{ background:var(--critical-strong); }
+  .pri-strip.pri-1{ background:#C98A2B; }
+  .pri-strip.pri-2{ background:#B7A21F; }
+  .pri-strip.pri-3{ background:#6A87A6; }
+  .pri-strip.pri-4{ background:#7B9A7B; }
+
+  /* --- Hierarki Ringkasan Item: Warna > Lengan > Ukuran --- */
+  .color-group{ background:var(--surface); border:1px solid var(--line); border-radius:10px; margin-bottom:8px; overflow:hidden; }
+  .color-group-head{ display:flex; align-items:center; gap:11px; padding:12px 14px; cursor:pointer; flex-wrap:wrap; }
+  .color-group-head:hover{ background:var(--accent-soft); }
+  .color-group-head .item-name{ font-size:13.5px; }
+  .lengan-group{ border-top:1px solid var(--line); background:#FBFAF8; }
+  .lengan-group-head{ display:flex; align-items:center; gap:11px; padding:9px 14px 9px 32px; cursor:pointer; flex-wrap:wrap; }
+  .lengan-group-head:hover{ background:var(--accent-soft); }
+  .lengan-dot{ width:7px; height:7px; border-radius:50%; background:var(--ink-faint); flex-shrink:0; }
+  .size-list{ border-top:1px solid var(--line); }
+  .size-row-head{ display:flex; align-items:center; gap:11px; padding:8px 14px 8px 52px; cursor:pointer; flex-wrap:wrap;
+    background:#FDFCFA; border-top:1px solid var(--line); }
+  .size-row-head:first-child{ border-top:none; }
+  .size-row-head:hover{ background:var(--accent-soft); }
+</style>
+</head>
+<body>
+<div class="dash-root" id="app"></div>
+
+<script>
+const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQU-ufetXrzsotAkisegzFKfx4GZXUA_fPY583_IzBlLCTE3orJ6l5d9F3nIkfKa_mxXVDuNZOvnKdq/pub?gid=123898253&single=true&output=csv";
+// [BARU] Sheet MASTER ITEM -- sumber kebenaran untuk semua kombinasi warna+ukuran yang
+// SEHARUSNYA ada, dipakai untuk melengkapi Ringkasan Item (termasuk item yang belum ada
+// aktivitas PO sama sekali -- tetap ditampilkan dengan data kosong/nol). Kalau belum ada
+// sheet MASTER ITEM tersendiri yang di-publish, boleh diarahkan ke sheet STATUS STOCK di
+// bawah ini juga (sama-sama mencakup seluruh item), tinggal ganti gid-nya kalau perlu.
+const MASTER_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQU-ufetXrzsotAkisegzFKfx4GZXUA_fPY583_IzBlLCTE3orJ6l5d9F3nIkfKa_mxXVDuNZOvnKdq/pub?gid=1952791216&single=true&output=csv";
+// [BARU] Sheet UNMATCHED ITEMS (ditulis oleh Modul 5 -- item yg GAGAL dipetakan ke Master
+// Item Name dari REPORT HARIAN / SURAT JALAN).
+const UNMATCHED_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQU-ufetXrzsotAkisegzFKfx4GZXUA_fPY583_IzBlLCTE3orJ6l5d9F3nIkfKa_mxXVDuNZOvnKdq/pub?gid=1407993971&single=true&output=csv";
+// [BARU] Sheet ON PRODUCTION (ditulis oleh Modul 5 -- rekap target cutting/cutting/finish
+// good/reject/wip per item per PO).
+const ON_PRODUCTION_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQU-ufetXrzsotAkisegzFKfx4GZXUA_fPY583_IzBlLCTE3orJ6l5d9F3nIkfKa_mxXVDuNZOvnKdq/pub?gid=1910577045&single=true&output=csv";
+// [BARU] Sheet "STATUS STOCK" -- sumber DEFAULT status stok per item (kolom: ITEM |
+// KATEGORI | WARNA | LENGAN & SIZE | STATUS), live & auto-termuat TANPA perlu upload file
+// apapun. Ini menggantikan ketergantungan pada upload Excel manual untuk melihat status
+// default -- upload Excel (di bawah) sekarang murni opsional, cuma dipakai kalau butuh
+// lihat status per toko/DC tertentu (overlay), bukan lagi satu-satunya cara lihat status.
+const STATUS_STOCK_DEFAULT_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQU-ufetXrzsotAkisegzFKfx4GZXUA_fPY583_IzBlLCTE3orJ6l5d9F3nIkfKa_mxXVDuNZOvnKdq/pub?gid=1952791216&single=true&output=csv";
+// [BARU] Endpoint Apps Script (Web App) untuk menimpa sheet STATUS STOCK jadi default
+// baru. Isi URL ini setelah deploy Modul6_UpdateStatusStockWebApp.gs sebagai Web App.
+// Kode rahasia HARUS SAMA PERSIS dengan SECRET_CODE_ di file .gs itu.
+const STATUS_STOCK_UPDATE_URL = "https://script.google.com/macros/s/AKfycbxZB2WgfHqJSzqKWjV10J3z8A2fzM1hAxWzg0SC___odYHWacYq8CfujaYMQZsWNaspcA/exec";
+const STATUS_STOCK_UPDATE_SECRET = "PPIC_38";
+const DEFAULT_STATUS_MARKER_STORAGE_KEY = "defaultStatusMarker_v1";
+// [BARU] Kunci "store" semu untuk opsi "Default (Data Tracking)" di tab Critical Item --
+// dipakai supaya tab itu bisa menampilkan STATUS TOTAL STOK baseline TANPA perlu upload
+// file Status Stock sama sekali.
+const DEFAULT_STORE_KEY = "__DEFAULT__";
+
+const COLOR_MAP = [
+  ['sky blue', '#7EC8E3'], ['baby blue', '#AFD8E8'], ['navy', '#1B2A4A'],
+  ['denim', '#3C5A78'], ['tosca', '#3F9C93'], ['abu muda', '#B7B7B0'],
+  ['abu tua', '#54544F'], ['abu', '#8C8C86'], ['coklat tua', '#5C3A21'],
+  ['coklat muda', '#A9764C'], ['coklat', '#7A5233'], ['mocha', '#7B5A45'],
+  ['khaki', '#B9A26A'], ['cream', '#EDE3CC'], ['beige', '#D8C7A8'],
+  ['hitam', '#1C1C1C'], ['putih', '#F2F2ED'], ['merah marun', '#7A2027'],
+  ['maroon', '#7A2027'], ['merah', '#B7312C'], ['dusty pink', '#D9A6A0'],
+  ['pink', '#E6A5B8'], ['orange', '#E07B39'], ['kuning', '#E8B923'],
+  ['hijau army', '#6B7052'], ['hijau', '#4C7A50'], ['ungu', '#6B4E8E'],
+  ['terracotta', '#C46A48'], ['mustard', '#C9A227'], ['silver', '#B7B7B7'],
+];
+function getSwatch(warna){
+  const w = (warna||'').toLowerCase();
+  for (const [key,hex] of COLOR_MAP){ if (w.includes(key)) return hex; }
+  return null;
+}
+const SIZE_ORDER = ['XXS','XS','S','M','L','XL','2XL','3XL','4XL','5XL'];
+
+const STATUS_PRIORITY_ORDER = ['CRITICAL LVL 3','CRITICAL LVL 2','CRITICAL LVL 1','NORMAL','OVER STOCK'];
+function statusPriority(status){
+  const s = (status||'').toUpperCase().trim();
+  const exact = STATUS_PRIORITY_ORDER.indexOf(s);
+  if (exact !== -1) return exact;
+  if (s.includes('CRITICAL')){
+    if (s.includes('3')) return 0;
+    if (s.includes('2')) return 1;
+    if (s.includes('1')) return 2;
+    return 0;
+  }
+  if (s.includes('NORMAL')) return 3;
+  if (s.includes('OVER')) return 4;
+  return 5;
+}
+function statusClass(status){
+  const s=(status||'').toUpperCase();
+  if (s.includes('CRITICAL')){
+    if (s.includes('3')) return 'badge badge-critical';
+    if (s.includes('2')) return 'badge badge-crit2';
+    if (s.includes('1')) return 'badge badge-crit1';
+    return 'badge badge-critical';
+  }
+  if (s.includes('OVER STOCK') || s.includes('OVER')) return 'badge badge-over';
+  if (s.includes('NORMAL')) return 'badge badge-normal';
+  return 'badge badge-neutral';
+}
+// [BARU] Label Prioritas Bongkar Inbound -- DITURUNKAN LANGSUNG dari STATUS TOTAL STOK
+// yang sudah ada (Critical Lvl 3 -> High, Lvl 2 -> Medium, Lvl 1 -> Low). BUKAN input manual.
+// Status selain 3 level critical ini (NORMAL/OVER STOCK) dianggap TIDAK relevan untuk
+// prioritas bongkar, jadi dikembalikan null (disaring keluar dari tab ini).
+function bongkarPriorityLabel(status){
+  const p = statusPriority(status);
+  if (p===0) return 'High';
+  if (p===1) return 'Medium';
+  if (p===2) return 'Low';
+  return null;
+}
+function bongkarPriorityBadgeClass(label){
+  if (label==='High') return 'badge badge-critical';
+  if (label==='Medium') return 'badge badge-crit2';
+  if (label==='Low') return 'badge badge-crit1';
+  return 'badge badge-neutral';
+}
+
+// --- Util tanggal ---
+function parseDDMMYYYYToTime(str){
+  if (!str) return Infinity;
+  const m = String(str).match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (!m) return Infinity;
+  const d = new Date(parseInt(m[3],10), parseInt(m[2],10)-1, parseInt(m[1],10));
+  const t = d.getTime();
+  return isNaN(t) ? Infinity : t;
+}
+function todayStartTime(){ const n=new Date(); return new Date(n.getFullYear(),n.getMonth(),n.getDate()).getTime(); }
+function toYMD(t){
+  if (t===Infinity || t==null || isNaN(t)) return '';
+  const d = new Date(t);
+  const pad = n => String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+}
+// Bucket dari TIMESTAMP: 0=hari ini, 1=akan datang, 2=terlewat, 3=tidak ada tanggal
+function dateBucketFromTime(t){
+  if (t === Infinity) return { bucket:3, key:Infinity };
+  const ts = todayStartTime();
+  if (t === ts) return { bucket:0, key:t };
+  if (t > ts) return { bucket:1, key:t };
+  return { bucket:2, key:t };
+}
+// Urutan: hari ini -> akan datang -> terlewat (konvensi yang sama dipakai di semua tab)
+function compareByTime(tA,tB){
+  const a = dateBucketFromTime(tA), b = dateBucketFromTime(tB);
+  if (a.bucket !== b.bucket) return a.bucket - b.bucket;
+  return a.key - b.key;
+}
+function compareByEstimasiTiba(aStr,bStr){
+  return compareByTime(parseDDMMYYYYToTime(aStr), parseDDMMYYYYToTime(bStr));
+}
+function computeShipmentStatus(estimasiTibaStr, intransitQty){
+  const t = parseDDMMYYYYToTime(estimasiTibaStr);
+  if (t === Infinity) return '';
+  const ts = todayStartTime();
+  if (t < ts) return 'TERLAMBAT';
+  return (intransitQty>0) ? 'TEPAT WAKTU' : 'BELUM SAMPAI';
+}
+function shipmentStatusClass(s){
+  if (s==='TERLAMBAT') return 'badge badge-late';
+  if (s==='TEPAT WAKTU') return 'badge badge-ontime';
+  if (s==='BELUM SAMPAI') return 'badge badge-pending';
+  return 'badge badge-neutral';
+}
+
+// --- [BARU] Infrastruktur filter URUTAN yang dipakai bersama di 3 menu ---
+// Urutan "terlambat -> tepat waktu" (ascending) sesuai contoh permintaan.
+const SHIPMENT_STATUS_ORDINAL = { 'TERLAMBAT':0, 'BELUM SAMPAI':1, 'TEPAT WAKTU':2 };
+function shipmentStatusOrdinal(s){ return SHIPMENT_STATUS_ORDINAL[s] !== undefined ? SHIPMENT_STATUS_ORDINAL[s] : 3; }
+
+// Bandingkan 2 baris/objek berdasar 1 field tertentu + arah (asc/desc). Dipakai untuk
+// semua opsi "urutan" di Ringkasan Item, Critical & Cari Koli, dan Prioritas Bongkar
+// Inbound -- SATU fungsi generik, konsisten, dan otomatis bisa dibalik (timbal balik).
+function compareByField(a, b, field, dir){
+  let cmp = 0;
+  if (field === 'qtyPO') cmp = (a.qtyPO||0) - (b.qtyPO||0);
+  else if (field === 'wip') cmp = (a.wip||0) - (b.wip||0);
+  else if (field === 'onDelivery') cmp = (a.onDelivery||0) - (b.onDelivery||0);
+  else if (field === 'intransit') cmp = (a.intransit||0) - (b.intransit||0);
+  else if (field === 'tglDelivery' || field === 'estimasiTiba'){
+    const ta = parseDDMMYYYYToTime(a[field]), tb = parseDDMMYYYYToTime(b[field]);
+    const aInf = ta===Infinity, bInf = tb===Infinity;
+    // Tanggal kosong SELALU di paling belakang, apapun arah urutannya.
+    if (aInf && bInf) return 0;
+    if (aInf) return 1;
+    if (bInf) return -1;
+    cmp = ta - tb;
+  } else if (field === 'shipmentStatus'){
+    const sa = computeShipmentStatus(a.estimasiTiba, a.intransit);
+    const sb = computeShipmentStatus(b.estimasiTiba, b.intransit);
+    cmp = shipmentStatusOrdinal(sa) - shipmentStatusOrdinal(sb);
+  } else {
+    return 0;
+  }
+  return dir === 'desc' ? -cmp : cmp;
+}
+
+// Opsi urutan tambahan (di luar mode bawaan tiap tab) -- format value: "field_dir".
+// Dipakai di Critical & Cari Koli dan Prioritas Bongkar Inbound (yang datanya per-koli,
+// jadi ada tanggal & status perjalanan). Ringkasan Item pakai daftar sendiri yang lebih
+// singkat (lihat SORT_OPTIONS_RINGKASAN) karena levelnya agregat per warna/lengan.
+const SORT_OPTIONS_KOLI_TAMBAHAN = [
+  { value:'qtyPO_desc', label:'Qty PO: terbesar &rarr; terkecil' },
+  { value:'qtyPO_asc', label:'Qty PO: terkecil &rarr; terbesar' },
+  { value:'wip_desc', label:'WIP: terbesar &rarr; terkecil' },
+  { value:'wip_asc', label:'WIP: terkecil &rarr; terbesar' },
+  { value:'onDelivery_desc', label:'On delivery: terbesar &rarr; terkecil' },
+  { value:'onDelivery_asc', label:'On delivery: terkecil &rarr; terbesar' },
+  { value:'intransit_desc', label:'Intransit: terbesar &rarr; terkecil' },
+  { value:'intransit_asc', label:'Intransit: terkecil &rarr; terbesar' },
+  { value:'tglDelivery_asc', label:'Tanggal delivery: terlama &rarr; terbaru' },
+  { value:'tglDelivery_desc', label:'Tanggal delivery: terbaru &rarr; terlama' },
+  { value:'estimasiTiba_asc', label:'Estimasi tiba: terlama &rarr; terbaru' },
+  { value:'estimasiTiba_desc', label:'Estimasi tiba: terbaru &rarr; terlama' },
+  { value:'shipmentStatus_asc', label:'Status perjalanan: Terlambat &rarr; Tepat waktu' },
+  { value:'shipmentStatus_desc', label:'Status perjalanan: Tepat waktu &rarr; Terlambat' },
+];
+const SORT_OPTIONS_RINGKASAN = [
+  { value:'qtyPO_desc', label:'Qty PO: terbesar &rarr; terkecil' },
+  { value:'qtyPO_asc', label:'Qty PO: terkecil &rarr; terbesar' },
+  { value:'wip_desc', label:'WIP: terbesar &rarr; terkecil' },
+  { value:'wip_asc', label:'WIP: terkecil &rarr; terbesar' },
+  { value:'onDelivery_desc', label:'Delivery: terbesar &rarr; terkecil' },
+  { value:'onDelivery_asc', label:'Delivery: terkecil &rarr; terbesar' },
+  { value:'intransit_desc', label:'Intransit: terbesar &rarr; terkecil' },
+  { value:'intransit_asc', label:'Intransit: terkecil &rarr; terbesar' },
+];
+
+// value berformat "field_dir" (mis. "qtyPO_desc") -> urutkan array pakai compareByField.
+function applyCustomSort(list, sortValue){
+  const idx = sortValue.lastIndexOf('_');
+  const field = sortValue.slice(0, idx);
+  const dir = sortValue.slice(idx+1);
+  return list.slice().sort((a,b) => compareByField(a,b,field,dir));
+}
+// Cek apakah suatu value adalah salah satu opsi custom sort field_dir (bukan mode bawaan).
+function isCustomSortValue(value){
+  return /_((asc)|(desc))$/.test(value||'');
+}
+
+function applyEtaModeFilter(rows, mode, customDate){
+  if (mode === 'semua') return rows;
+  const todayYMD = toYMD(todayStartTime());
+  const tomorrowYMD = toYMD(todayStartTime() + 86400000);
+  return rows.filter(r => {
+    const t = parseDDMMYYYYToTime(r.estimasiTiba);
+    const ymd = toYMD(t);
+    if (mode === 'terlewat') return t !== Infinity && t < todayStartTime();
+    if (mode === 'hari_ini') return ymd === todayYMD;
+    if (mode === 'besok') return ymd === tomorrowYMD;
+    if (mode === 'tanggal') return customDate ? ymd === customDate : true;
+    return true;
+  });
+}
+
+function parseItemName(name){
+  const tokens = (name||'').trim().split(/\s+/).filter(Boolean);
+  if (!tokens.length) return { warna:'', kain:'', lengan:'', ukuran:'' };
+  let lastToken = tokens[tokens.length-1];
+  let ukuran = '';
+  let rest;
+  // [BARU] Cuma anggap token terakhir sebagai UKURAN kalau memang dikenal
+  // (ada di SIZE_ORDER). Kalau tidak, jangan dipaksa -- biarkan ukuran kosong,
+  // supaya tidak muncul "ukuran sampah" (sisa teks yang bukan size beneran).
+  if (SIZE_ORDER.indexOf(lastToken.toUpperCase()) !== -1){
+    ukuran = lastToken.toUpperCase();
+    rest = tokens.slice(0, tokens.length-1);
+  } else {
+    rest = tokens.slice();
+  }
+  let lengan = '';
+  if (rest.length && /^(PDK|PJG)$/i.test(rest[rest.length-1])){
+    lengan = rest[rest.length-1].toUpperCase();
+    rest = rest.slice(0, rest.length-1);
+  }
+  let kain = '';
+  if (rest.length && /^[0-9]/.test(rest[rest.length-1])){
+    kain = rest[rest.length-1];
+    rest = rest.slice(0, rest.length-1);
+  }
+  return { warna: rest.join(' '), kain, lengan: lengan==='PDK'?'Pendek':lengan==='PJG'?'Panjang':(lengan||'Lainnya'), ukuran };
+}
+function num(v){
+  if (v===undefined||v===null) return 0;
+  const s = String(v).replace(/,/g,'').trim();
+  if (s==='') return 0;
+  const n = parseFloat(s);
+  return isNaN(n)?0:n;
+}
+function toText(v){
+  if (v===undefined||v===null) return '';
+  if (v instanceof Date){
+    const pad = (n) => String(n).padStart(2,'0');
+    const hasTime = v.getHours()!==0 || v.getMinutes()!==0;
+    const datePart = `${pad(v.getDate())}/${pad(v.getMonth()+1)}/${v.getFullYear()}`;
+    return hasTime ? `${datePart} ${pad(v.getHours())}:${pad(v.getMinutes())}` : datePart;
+  }
+  return String(v).trim();
+}
+function normalizeRow(row){
+  const get = (key) => {
+    const k = Object.keys(row).find(kk => kk.trim().toUpperCase()===key);
+    return k ? row[k] : '';
+  };
+  return {
+    itemName:toText(get('ITEM NAME')),
+    nomorPO:toText(get('NOMOR PO')),
+    nomorKoli:toText(get('NOMOR KOLI')),
+    qtyPO:num(get('QTY PO')),
+    wip:num(get('WIP')),
+    onDelivery:num(get('ON DELIVERY')),
+    intransit:num(get('INTRANSIT')),
+    tanggalKirim:toText(get('TANGGAL DAN JAM PENGIRIMAN')),
+    resi:toText(get('RESI')),
+    tglDelivery:toText(get('TANGGAL DELIVERY')),
+    estimasiTiba:toText(get('ESTIMASI TIBA')),
+    status:toText(get('STATUS TOTAL STOK')),
+    hpp:toText(get('STATUS HPP')),
+  };
+}
+// [BARU] Kelas badge untuk status HPP (ADA HPP / BELUM ADA HPP).
+function hppBadgeClass(hpp){
+  const h = (hpp||'').toUpperCase();
+  if (h.includes('BELUM')) return 'badge badge-critical';
+  if (h.includes('ADA')) return 'badge badge-over';
+  return 'badge badge-neutral';
+}
+// [BARU] Normalisasi 1 baris dari sheet UNMATCHED ITEMS (ditulis Modul 5):
+// NOMOR PO | NOMOR KOLI | ITEM (gagal mapping) | QTY | CATATAN
+function normalizeUnmatchedRow(row){
+  const get = (key) => {
+    const k = Object.keys(row).find(kk => kk.trim().toUpperCase()===key);
+    return k ? row[k] : '';
+  };
+  return {
+    nomorPO: toText(get('NOMOR PO')),
+    nomorKoli: toText(get('NOMOR KOLI')),
+    itemName: toText(get('ITEM (GAGAL MAPPING)')),
+    qty: num(get('QTY')),
+    catatan: toText(get('CATATAN')),
+  };
+}
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function fmt(n){ return (n||0).toLocaleString('id-ID'); }
+function swatchHtml(warna){
+  const hex = getSwatch(warna);
+  const bg = hex ? hex : 'repeating-linear-gradient(45deg,#DAD5C8,#DAD5C8 3px,#EFEDE6 3px,#EFEDE6 6px)';
+  return `<span class="swatch" style="background:${bg}" title="${esc(warna||'Warna tidak diketahui')}"></span>`;
+}
+
+let state = {
+  rows: [], loading:true, error:null, lastUpdated:null,
+  tab:'ringkasan', expandedSet:new Set(), koliQuery:'',
+  filters:{ search:'', warna:[], kain:'', lengan:'', ukuran:'', status:'' },
+  warnaDropdownOpen:false,
+  // [BARU] Overlay Status Stock -- upload file Excel multi-sheet (TOTAL STOCK, DC, per
+  // toko), pilih store + jenis status, dipakai menggantikan STATUS TOTAL STOK default
+  // dari Data Tracking (baseline/rumus asli TIDAK diubah, ini cuma overlay tampilan).
+  statusStockData: null, // { sheetNames:[...], bySheet: Map(sheetName -> Map(itemName -> {statusTotal, statusOhOd, statusOh})) }
+  statusStockFileName: '',
+  statusFilterStore: '', // '' = pakai default/baseline dari Data Tracking
+  statusFilterStatusType: '', // 'total' | 'od_oh' | 'oh'
+  priorityMode:'prioritas',
+  tglDeliveryFilter:'',
+  estimasiTibaMode:'semua',
+  estimasiTibaDate:'',
+  // [BARU] Filter status pengiriman di Critical & Cari Koli: '' | 'ON_DELIVERY' | 'INTRANSIT'
+  travelStatusFilter:'',
+  // Hierarki Ringkasan Item: Warna > Lengan > Ukuran
+  expandedColor:new Set(),
+  expandedLengan:new Set(),
+  // [BARU] Prioritas Bongkar Inbound -- turunan dari data DATA TRACKING, BUKAN input manual
+  // [BARU] Filter urutan Ringkasan Item ('' = default nama warna A-Z, atau field_dir)
+  ringkasanSortMode: '',
+  // [BARU] Filter urutan Prioritas Bongkar Inbound ('prioritas' = default, atau field_dir)
+  bongkarSortMode: 'prioritas',
+  bongkarFilters:{ search:'', warna:[], priorityLevel:'', etaMode:'semua', etaDate:'', shipmentStatus:'', hppStatus:'' },
+  bongkarWarnaDropdownOpen:false,
+  // [BARU] Tab "Critical Item" -- default-nya menampilkan STATUS TOTAL STOK baseline dari
+  // DATA TRACKING (store = DEFAULT_STORE_KEY), TANPA perlu upload file Status Stock dulu.
+  // Kalau ada file ter-upload, bisa dipilih store/sheet lain sebagai overlay.
+  criticalItemFilters: { store:'', statusType:'', statusValue:'', search:'', warna:[] },
+  // [BARU] Tab "Item Tidak Cocok" -- SEKARANG menampilkan LANGSUNG isi sheet UNMATCHED
+  // ITEMS (item yang gagal dipetakan Modul 5 dari REPORT HARIAN/SURAT JALAN), bukan lagi
+  // hasil banding file Status Stock vs MASTER ITEM.
+  unmatchedFilters: { search:'' },
+  unmatchedItemsRows: [], // hasil load dari UNMATCHED_CSV_URL
+  // [BARU] Tab "On Production" -- rekap target cutting/cutting/finish good/reject/wip
+  // per item per PO, sumbernya sheet ON PRODUCTION (ditulis Modul 5).
+  onProductionRows: [],
+  onProductionFilters: { search:'' },
+  onProductionLoadError: null,
+  // [BARU] Default status stock -- Map(itemName -> status), dimuat otomatis dari sheet
+  // "STATUS STOCK" (live, tanpa perlu upload). Dipakai sebagai sumber default status di
+  // SELURUH dashboard, dengan urutan prioritas: overlay Excel manual (kalau aktif) >
+  // default sheet STATUS STOCK ini > baseline STATUS TOTAL STOK dari DATA TRACKING.
+  statusStockDefaultMap: new Map(),
+  statusStockDefaultLoadError: null,
+  criticalItemWarnaDropdownOpen:false,
+  expandedCiColor: new Set(),
+  expandedCiLengan: new Set(),
+  // [BARU] Penanda "default status saat ini berasal dari mana" -- lihat catatan di
+  // loadDefaultStatusMarker(). null = belum pernah ada yang update.
+  defaultStatusMarker: loadDefaultStatusMarker(),
+  statusStockUpdating: false,
+  // [BARU] Daftar lengkap item dari sheet MASTER ITEM -- dipakai melengkapi Ringkasan Item
+  masterItems: [], // array of { itemName, attrs }
+  // [BARU] Drill-down per baris koli di tab Prioritas Bongkar Inbound (key: item::po::koli)
+  expandedBongkarSet: new Set(),
+};
+let autoRefreshId = null;
+
+
+// [BARU] Sheet yang punya 3 pilihan jenis status (TOTAL STOCK & DC). Sheet toko lain
+// cuma punya 2 pilihan (STATUS TOTAL STOK, STATUS OH).
+const STATUS_STOCK_3OPSI_SHEETS = ['TOTAL STOCK', 'DC'];
+
+function getStatusTypeOptions(storeName){
+  if (STATUS_STOCK_3OPSI_SHEETS.includes((storeName||'').toUpperCase())){
+    return [
+      { value:'total', label:'Status Total Stok (WIP + OD + OH)' },
+      { value:'od_oh', label:'Status OD + OH' },
+      { value:'oh', label:'Status OH' },
+    ];
+  }
+  return [
+    { value:'total', label:'Status Total Stok' },
+    { value:'oh', label:'Status OH' },
+  ];
+}
+
+// Nilai seperti #REF!/#N/A/#VALUE! dari Excel dianggap tidak valid (bukan status asli).
+function isNilaiErrorExcel(v){
+  return /^#(REF|N\/A|VALUE|DIV\/0|NAME|NULL|NUM)/i.test(String(v||'').trim());
+}
+
+// Parse 1 sheet Status Stock: cari baris header (kolom pertama = "ITEM") secara dinamis,
+// karena jumlah baris kosong di atas bisa beda-beda antar sheet.
+function parseStatusStockSheet(sheet){
+  const rows = XLSX.utils.sheet_to_json(sheet, { header:1, defval:'', raw:false });
+  let headerIdx = -1;
+  for (let i=0;i<rows.length;i++){
+    if (String(rows[i][0]||'').trim().toUpperCase()==='ITEM'){ headerIdx = i; break; }
+  }
+  if (headerIdx === -1) return null;
+  const headers = rows[headerIdx].map(h => String(h||'').trim().toUpperCase());
+  const idxItem = headers.indexOf('ITEM');
+  const idxTotal = headers.indexOf('STATUS TOTAL STOK');
+  const idxOhOd = headers.indexOf('STATUS OH + OD');
+  const idxOh = headers.indexOf('STATUS OH');
+  if (idxItem === -1) return null;
+  const map = new Map();
+  for (let i=headerIdx+1; i<rows.length; i++){
+    const row = rows[i];
+    const item = String(row[idxItem]||'').trim();
+    if (!item) continue;
+    const clean = (v) => (v===undefined || isNilaiErrorExcel(v)) ? '' : String(v).trim();
+    map.set(item, {
+      statusTotal: idxTotal!==-1 ? clean(row[idxTotal]) : '',
+      statusOhOd: idxOhOd!==-1 ? clean(row[idxOhOd]) : '',
+      statusOh: idxOh!==-1 ? clean(row[idxOh]) : '',
+    });
+  }
+  return map;
+}
+
+// [BARU] Ambil status OVERLAY/DEFAULT untuk 1 item, dengan urutan prioritas:
+// 1) Overlay manual (file Excel ter-upload, store+jenis status dipilih) -- paling spesifik.
+// 2) Default sheet "STATUS STOCK" (live, auto-termuat, TIDAK perlu upload apapun).
+// 3) '' (kosong) -> caller fallback ke baseline STATUS TOTAL STOK dari DATA TRACKING.
+function getOverlayStatus(itemName){
+  if (state.statusStockData && state.statusFilterStore && state.statusFilterStatusType){
+    const sheetMap = state.statusStockData.bySheet.get(state.statusFilterStore);
+    const rec = sheetMap ? sheetMap.get(itemName) : null;
+    if (rec){
+      let v = '';
+      if (state.statusFilterStatusType === 'total') v = rec.statusTotal;
+      else if (state.statusFilterStatusType === 'od_oh') v = rec.statusOhOd;
+      else if (state.statusFilterStatusType === 'oh') v = rec.statusOh;
+      if (v) return v;
+    }
+  }
+  const def = state.statusStockDefaultMap.get(itemName);
+  if (def) return def;
+  return '';
+}
+
+// [BARU] Kumpulkan semua {itemName, status} dari store+jenis status yang lagi dipilih,
+// utk dikirim ke Web App jadi default baru di STATUS STOCK.
+function buildStatusStockPushPayload(){
+  const sheetMap = state.statusStockData.bySheet.get(state.statusFilterStore);
+  const items = [];
+  if (!sheetMap) return items;
+  sheetMap.forEach((rec, itemName) => {
+    let statusVal = '';
+    if (state.statusFilterStatusType === 'total') statusVal = rec.statusTotal;
+    else if (state.statusFilterStatusType === 'od_oh') statusVal = rec.statusOhOd;
+    else if (state.statusFilterStatusType === 'oh') statusVal = rec.statusOh;
+    if (statusVal) items.push({ itemName, status: statusVal });
+  });
+  return items;
+}
+
+// [BARU] Kirim data ke Web App Apps Script -- menimpa sheet STATUS STOCK supaya
+// jadi default baru untuk SEMUA orang yang buka dashboard (tanpa perlu upload/pilih
+// overlay apapun). Selalu minta konfirmasi dulu karena ini aksi MENIMPA data.
+async function pushStatusStockAsDefault(){
+  if (!STATUS_STOCK_UPDATE_URL || STATUS_STOCK_UPDATE_URL.indexOf('GANTI_DENGAN') === 0){
+    alert('Fitur ini belum aktif. Deploy dulu Modul6_UpdateStatusStockWebApp.gs sebagai Web App, lalu isi URL-nya di konstanta STATUS_STOCK_UPDATE_URL pada file dashboard ini.');
+    return;
+  }
+  const items = buildStatusStockPushPayload();
+  if (items.length === 0){
+    alert('Tidak ada data untuk dikirim -- pastikan Store dan Jenis Status sudah dipilih.');
+    return;
+  }
+  const statusTypeLabel = (getStatusTypeOptions(state.statusFilterStore).find(o=>o.value===state.statusFilterStatusType)||{}).label || state.statusFilterStatusType;
+  const konfirmasi = confirm(
+    'Yakin ingin MENIMPA sheet STATUS STOCK dengan data ini?\\n\\n' +
+    'Store/sheet: ' + state.statusFilterStore + '\\n' +
+    'Jenis status: ' + statusTypeLabel + '\\n' +
+    'Jumlah item: ' + items.length + '\\n\\n' +
+    'Ini akan jadi DEFAULT baru untuk semua orang yang buka dashboard ini ' +
+    '(sampai ada yang menimpa lagi). Aksi ini tidak bisa "undo" otomatis dari dashboard.'
+  );
+  if (!konfirmasi) return;
+
+  state.statusStockUpdating = true;
+  render();
+  try{
+    const res = await fetch(STATUS_STOCK_UPDATE_URL, {
+      method: 'POST',
+      // Sengaja pakai text/plain (bukan application/json) supaya browser tidak
+      // mengirim CORS preflight OPTIONS -- Apps Script Web App tidak melayani OPTIONS.
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({
+        secret: STATUS_STOCK_UPDATE_SECRET,
+        sourceStore: state.statusFilterStore,
+        statusTypeLabel: statusTypeLabel,
+        items: items,
+      }),
+    });
+    const result = await res.json();
+    if (!result.ok){
+      alert('Gagal update: ' + (result.error || 'tidak diketahui.'));
+      return;
+    }
+    const marker = {
+      store: state.statusFilterStore,
+      statusTypeLabel: statusTypeLabel,
+      itemCount: result.total || items.length,
+      updatedAt: new Date().toISOString(),
+    };
+    state.defaultStatusMarker = marker;
+    saveDefaultStatusMarker(marker);
+    alert(
+      'Berhasil! ' + result.total + ' item diperbarui di STATUS STOCK.\\n\\n' +
+      'Proses refresh DATA TRACKING (Update Data Sekarang) sudah dijadwalkan jalan ' +
+      'otomatis dalam beberapa detik -- tidak perlu dijalankan manual lagi. Untuk PO ' +
+      'yang banyak, ini bisa makan waktu beberapa menit; cek Google Sheet untuk lihat progresnya.'
+    );
+  }catch(err){
+    alert('Gagal mengirim data: ' + (err.message || 'periksa koneksi internet Anda.'));
+  }finally{
+    state.statusStockUpdating = false;
+    render();
+  }
+}
+
+function handleStatusStockUpload(file){
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try{
+      const wb = XLSX.read(e.target.result, { type:'array' });
+      const bySheet = new Map();
+      wb.SheetNames.forEach(name => {
+        const parsed = parseStatusStockSheet(wb.Sheets[name]);
+        if (parsed && parsed.size > 0) bySheet.set(name, parsed);
+      });
+      if (bySheet.size === 0){
+        alert('Tidak ketemu sheet dengan format Status Stock yang dikenali (harus ada kolom ITEM, STATUS TOTAL STOK, dst).');
+        return;
+      }
+      state.statusStockData = { sheetNames: Array.from(bySheet.keys()), bySheet };
+      state.statusStockFileName = file.name;
+      state.statusFilterStore = '';
+      state.statusFilterStatusType = '';
+      render();
+    }catch(err){
+      alert('Gagal membaca file Status Stock: ' + (err.message || 'format tidak dikenali'));
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+// [BARU] Ambil daftar lengkap item dari sheet MASTER ITEM. Dipanggil terpisah dari
+// loadData() supaya kalau gagal (mis. sheet belum di-publish), Ringkasan Item TETAP
+// jalan seperti biasa (cuma tanpa item "kosong" tambahan) -- tidak bikin seluruh
+// dashboard error.
+// [BARU] Penanda default status (dashboard-side, TERPISAH dari STATUS STOCK sheet
+// itu sendiri) -- cuma buat transparansi tampilan, disimpan di localStorage browser ini.
+function loadDefaultStatusMarker(){
+  try{ const raw = localStorage.getItem(DEFAULT_STATUS_MARKER_STORAGE_KEY); return raw ? JSON.parse(raw) : null; }
+  catch(e){ return null; }
+}
+function saveDefaultStatusMarker(marker){
+  try{ localStorage.setItem(DEFAULT_STATUS_MARKER_STORAGE_KEY, JSON.stringify(marker)); } catch(e){}
+}
+
+// [BARU] Ambil penanda "default STATUS STOCK sekarang dari mana" LANGSUNG dari
+// server (Apps Script Web App, lewat GET) -- supaya penandanya kelihatan di browser
+// SIAPAPUN yang buka dashboard ini, bukan cuma di browser orang yang menekan tombol
+// Update tadi (localStorage kan cuma tersimpan lokal per-browser). Kalau endpoint
+// belum di-deploy/gagal diakses, diam-diam fallback ke cache localStorage yang lama
+// (kalau ada) -- tidak mengganggu jalannya dashboard.
+async function syncDefaultStatusMarkerFromServer(){
+  if (!STATUS_STOCK_UPDATE_URL || STATUS_STOCK_UPDATE_URL.indexOf('GANTI_DENGAN') === 0) return;
+  try{
+    const res = await fetch(STATUS_STOCK_UPDATE_URL + '?_cb=' + Date.now());
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.ok && data.updatedAt){
+      const marker = {
+        store: data.store || '',
+        statusTypeLabel: data.statusTypeLabel || '',
+        itemCount: data.itemCount || 0,
+        updatedAt: data.updatedAt,
+      };
+      state.defaultStatusMarker = marker;
+      saveDefaultStatusMarker(marker);
+    }
+  }catch(e){
+    // Diamkan -- tetap pakai cache localStorage yang sudah ada (kalau ada).
+  }
+}
+
+async function loadMasterItems(){
+  try{
+    const res = await fetch(MASTER_CSV_URL + '&_cb=' + Date.now());
+    if (!res.ok) return;
+    const text = await res.text();
+    const parsed = Papa.parse(text, { header:true, skipEmptyLines:true });
+    const get = (row,key) => {
+      const k = Object.keys(row).find(kk => kk.trim().toUpperCase()===key);
+      return k ? row[k] : '';
+    };
+    const seen = new Set();
+    const list = [];
+    parsed.data.forEach(row => {
+      const itemName = toText(get(row,'ITEM'));
+      if (!itemName || seen.has(itemName)) return;
+      seen.add(itemName);
+      // [PENTING] Warna/lengan/ukuran diturunkan dari kolom ITEM (bukan kolom WARNA
+      // master), supaya PERSIS sama caranya dengan item yang datang dari DATA
+      // TRACKING -- ini "konektor" yang bikin keduanya nyambung/nge-merge dengan benar.
+      list.push({ itemName, attrs: parseItemName(itemName) });
+    });
+    state.masterItems = list;
+  }catch(e){
+    // Diamkan saja -- Ringkasan Item tetap jalan pakai data DATA TRACKING saja.
+  }
+}
+
+// [BARU] Ambil daftar item yang GAGAL dipetakan ke Master Item Name (sheet UNMATCHED
+// ITEMS, ditulis oleh Modul 5). Dipanggil terpisah dari loadData() supaya kalau gagal
+// (mis. sheet belum di-publish/gid belum diisi), tab lain tetap jalan normal.
+async function loadUnmatchedItems(){
+  try{
+    if (!UNMATCHED_CSV_URL || UNMATCHED_CSV_URL.indexOf('GANTI_DENGAN') !== -1){
+      state.unmatchedItemsLoadError = 'Link sheet UNMATCHED ITEMS belum diisi (lihat konstanta UNMATCHED_CSV_URL di dashboard).';
+      return;
+    }
+    const res = await fetch(UNMATCHED_CSV_URL + '&_cb=' + Date.now());
+    if (!res.ok) throw new Error('status ' + res.status);
+    const text = await res.text();
+    const parsed = Papa.parse(text, { header:true, skipEmptyLines:true });
+    state.unmatchedItemsRows = parsed.data.map(normalizeUnmatchedRow).filter(r => r.itemName);
+    state.unmatchedItemsLoadError = null;
+  }catch(e){
+    state.unmatchedItemsLoadError = 'Gagal memuat sheet UNMATCHED ITEMS -- pastikan sheet-nya sudah di-publish ke web.';
+  }
+}
+
+// [BARU] Ambil rekap ON PRODUCTION (target cutting/cutting/finish good/reject/wip per
+// item per PO, ditulis Modul 5). Dipanggil terpisah supaya kalau gagal, tab lain tetap jalan.
+async function loadOnProduction(){
+  try{
+    const res = await fetch(ON_PRODUCTION_CSV_URL + '&_cb=' + Date.now());
+    if (!res.ok) throw new Error('status ' + res.status);
+    const text = await res.text();
+    const parsed = Papa.parse(text, { header:true, skipEmptyLines:true });
+    state.onProductionRows = parsed.data.map(normalizeOnProductionRow).filter(r => r.itemName);
+    state.onProductionLoadError = null;
+  }catch(e){
+    state.onProductionLoadError = 'Gagal memuat sheet ON PRODUCTION -- pastikan sheet-nya sudah di-publish ke web.';
+  }
+}
+
+// [BARU] Ambil DEFAULT status stock -- sheet "STATUS STOCK" (ITEM | KATEGORI | WARNA |
+// LENGAN & SIZE | STATUS), live & otomatis termuat tanpa perlu upload apapun. Jadi sumber
+// status default untuk SELURUH dashboard (lihat getOverlayStatus()).
+async function loadStatusStockDefault(){
+  try{
+    const res = await fetch(STATUS_STOCK_DEFAULT_CSV_URL + '&_cb=' + Date.now());
+    if (!res.ok) throw new Error('status ' + res.status);
+    const text = await res.text();
+    const parsed = Papa.parse(text, { header:true, skipEmptyLines:true });
+    const get = (row,key) => {
+      const k = Object.keys(row).find(kk => kk.trim().toUpperCase()===key);
+      return k ? row[k] : '';
+    };
+    const map = new Map();
+    parsed.data.forEach(row => {
+      const itemName = toText(get(row,'ITEM'));
+      const status = toText(get(row,'STATUS'));
+      if (!itemName) return;
+      map.set(itemName, status);
+    });
+    state.statusStockDefaultMap = map;
+    state.statusStockDefaultLoadError = null;
+  }catch(e){
+    state.statusStockDefaultLoadError = 'Gagal memuat sheet STATUS STOCK -- status default dashboard akan fallback ke STATUS TOTAL STOK dari Data Tracking.';
+  }
+}
+
+// [BARU] Normalisasi 1 baris dari sheet ON PRODUCTION (ditulis Modul 5):
+// ITEM | NOMOR PO | TARGET CUTTING | CUTTING | FINISH GOOD | REJECT | WIP | KOLI
+function normalizeOnProductionRow(row){
+  const get = (key) => {
+    const k = Object.keys(row).find(kk => kk.trim().toUpperCase()===key);
+    return k ? row[k] : '';
+  };
+  return {
+    itemName: toText(get('ITEM')),
+    nomorPO: toText(get('NOMOR PO')),
+    targetCutting: num(get('TARGET CUTTING')),
+    cutting: num(get('CUTTING')),
+    finishGood: num(get('FINISH GOOD')),
+    reject: num(get('REJECT')),
+    wip: num(get('WIP')),
+    koli: toText(get('KOLI')),
+  };
+}
+
+async function loadData(){
+  state.loading = true; state.error = null; render();
+  try{
+    const res = await fetch(CSV_URL + '&_cb=' + Date.now());
+    if (!res.ok) throw new Error('Gagal mengambil data (status ' + res.status + ')');
+    const text = await res.text();
+    const parsed = Papa.parse(text, { header:true, skipEmptyLines:true });
+    state.rows = parsed.data.map(normalizeRow).filter(r => r.itemName);
+    state.lastUpdated = new Date();
+    if (state.masterItems.length === 0) await loadMasterItems();
+    await loadStatusStockDefault();
+    await loadUnmatchedItems();
+    await loadOnProduction();
+    await syncDefaultStatusMarkerFromServer();
+  }catch(e){
+    state.error = (e && e.message) || 'Gagal memuat data.';
+  }finally{
+    state.loading = false; render();
+  }
+}
+
+function getParsedRows(){
+  return state.rows.map(r => {
+    const attrs = parseItemName(r.itemName);
+    // [BARU] Kalau overlay Status Stock aktif DAN item ini ketemu di sheet yang dipilih,
+    // status yang dipakai di SELURUH dashboard (grouping, badge, filter critical, dst)
+    // jadi status dari file upload -- BUKAN lagi STATUS TOTAL STOK default dari Data
+    // Tracking. Kalau tidak aktif atau item tidak ketemu, tetap pakai default/baseline
+    // (rumus asli di Google Sheet TIDAK diubah sama sekali).
+    const overlay = getOverlayStatus(r.itemName);
+    const effectiveStatus = overlay || r.status;
+    return { ...r, attrs, status: effectiveStatus, statusBaseline: r.status };
+  });
+}
+
+function computeDerived(){
+  const parsedRows = getParsedRows();
+  const map = new Map();
+  for (const r of parsedRows){
+    if (!map.has(r.itemName)){
+      map.set(r.itemName, { itemName:r.itemName, attrs:r.attrs, poMap:new Map(), onDelivery:0, intransit:0, koliRows:[], statuses:new Set() });
+    }
+    const g = map.get(r.itemName);
+    if (r.nomorPO && !g.poMap.has(r.nomorPO)) g.poMap.set(r.nomorPO, { qtyPO:r.qtyPO, wip:r.wip });
+    g.onDelivery += r.onDelivery; g.intransit += r.intransit;
+    if (r.nomorKoli || r.tanggalKirim) g.koliRows.push(r);
+    if (r.status) g.statuses.add(r.status);
+  }
+  // [BARU] Lengkapi dengan item dari sheet MASTER ITEM yang BELUM PUNYA aktivitas PO
+  // sama sekali di DATA TRACKING -- tetap dimasukkan, cuma datanya kosong/nol.
+  // Item yang SUDAH ADA di atas (dari DATA TRACKING) TIDAK ditimpa -- master cuma
+  // mengisi celah/gap, bukan menggantikan data asli.
+  state.masterItems.forEach(mi => {
+    if (!map.has(mi.itemName)){
+      const g = { itemName:mi.itemName, attrs:mi.attrs, poMap:new Map(), onDelivery:0, intransit:0, koliRows:[], statuses:new Set() };
+      // Item tanpa aktivitas PO sama sekali tetap bisa punya status overlay (mis. dari
+      // file Status Stock toko) -- kalau ada, tampilkan; kalau tidak, biarkan kosong.
+      const overlay = getOverlayStatus(mi.itemName);
+      if (overlay) g.statuses.add(overlay);
+      map.set(mi.itemName, g);
+    }
+  });
+  const itemSummaries = Array.from(map.values()).map(g => {
+    let qtyPO=0, wip=0;
+    g.poMap.forEach(v => { qtyPO+=v.qtyPO; wip+=v.wip; });
+    const statusList = Array.from(g.statuses);
+    const primaryStatus = statusList.sort((a,b)=>statusPriority(a)-statusPriority(b))[0] || '';
+    const isCritical = statusList.some(s => s.toUpperCase().includes('CRITICAL'));
+    return { ...g, qtyPO, wip, statusList, primaryStatus, isCritical, poCount: g.poMap.size };
+  });
+  const opts = { warna:new Set(), kain:new Set(), lengan:new Set(), ukuran:new Set(), status:new Set() };
+  itemSummaries.forEach(it => {
+    if (it.attrs.warna) opts.warna.add(it.attrs.warna);
+    if (it.attrs.kain) opts.kain.add(it.attrs.kain);
+    if (it.attrs.lengan) opts.lengan.add(it.attrs.lengan);
+    if (it.attrs.ukuran) opts.ukuran.add(it.attrs.ukuran);
+    it.statusList.forEach(s => opts.status.add(s));
+  });
+  const filterOptions = {
+    warna: Array.from(opts.warna).sort(),
+    kain: Array.from(opts.kain).sort(),
+    lengan: Array.from(opts.lengan).sort(),
+    ukuran: Array.from(opts.ukuran).sort((a,b)=>SIZE_ORDER.indexOf(a)-SIZE_ORDER.indexOf(b)),
+    status: Array.from(opts.status).sort((a,b)=>statusPriority(a)-statusPriority(b)),
+  };
+  const f = state.filters;
+  const q = f.search.trim().toLowerCase();
+  const filteredItems = itemSummaries.filter(it => {
+    if (f.warna.length>0 && !f.warna.includes(it.attrs.warna)) return false;
+    if (f.kain && it.attrs.kain!==f.kain) return false;
+    if (f.status && !it.statusList.includes(f.status)) return false;
+    if (q){
+      const hay = (it.itemName+' '+Array.from(it.poMap.keys()).join(' ')).toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  }).sort((a,b)=>a.itemName.localeCompare(b.itemName));
+  const totals = filteredItems.reduce((acc,it) => {
+    acc.qtyPO+=it.qtyPO; acc.wip+=it.wip; acc.onDelivery+=it.onDelivery;
+    acc.intransit+=it.intransit;
+    if (it.isCritical) acc.critical+=1;
+    return acc;
+  }, {qtyPO:0,wip:0,onDelivery:0,intransit:0,critical:0});
+
+  const colorMap = new Map();
+  filteredItems.forEach(it => {
+    const warna = it.attrs.warna || '(Tanpa warna)';
+    if (!colorMap.has(warna)) colorMap.set(warna, { warna, items:[], lenganMap:new Map() });
+    const cg = colorMap.get(warna);
+    cg.items.push(it);
+    const lengan = it.attrs.lengan || 'Lainnya';
+    if (!cg.lenganMap.has(lengan)) cg.lenganMap.set(lengan, { lengan, items:[] });
+    cg.lenganMap.get(lengan).items.push(it);
+  });
+  function sumMetrics(items){
+    return items.reduce((acc,it)=>{
+      acc.qtyPO+=it.qtyPO; acc.wip+=it.wip; acc.onDelivery+=it.onDelivery; acc.intransit+=it.intransit;
+      if (it.isCritical) acc.criticalCount+=1;
+      return acc;
+    }, {qtyPO:0,wip:0,onDelivery:0,intransit:0,criticalCount:0});
+  }
+  const rsm = state.ringkasanSortMode; // '' = default, atau 'field_dir'
+  const colorGroups = Array.from(colorMap.values()).map(cg => {
+    const m = sumMetrics(cg.items);
+    const lenganGroups = Array.from(cg.lenganMap.values()).map(lg => {
+      const lm = sumMetrics(lg.items);
+      const sortedItems = rsm
+        ? applyCustomSort(lg.items, rsm)
+        : lg.items.slice().sort((a,b)=>SIZE_ORDER.indexOf(a.attrs.ukuran)-SIZE_ORDER.indexOf(b.attrs.ukuran));
+      return { ...lg, ...lm, items: sortedItems };
+    });
+    const sortedLenganGroups = rsm ? applyCustomSort(lenganGroups, rsm) : lenganGroups.sort((a,b)=>a.lengan.localeCompare(b.lengan));
+    return { ...cg, ...m, lenganGroups: sortedLenganGroups, itemCount: cg.items.length };
+  });
+  const sortedColorGroups = rsm ? applyCustomSort(colorGroups, rsm) : colorGroups.sort((a,b)=>a.warna.localeCompare(b.warna));
+
+  const kq = state.koliQuery.trim().toLowerCase();
+  let priorityKoliRows = parsedRows.filter(r => r.nomorKoli || r.tanggalKirim);
+
+  if (kq){
+    priorityKoliRows = priorityKoliRows.filter(r =>
+      (r.nomorKoli||'').toLowerCase().includes(kq) ||
+      (r.tanggalKirim||'').toLowerCase().includes(kq) ||
+      (r.resi||'').toLowerCase().includes(kq) ||
+      (r.nomorPO||'').toLowerCase().includes(kq) ||
+      (r.itemName||'').toLowerCase().includes(kq)
+    );
+  }
+
+  if (state.tglDeliveryFilter){
+    priorityKoliRows = priorityKoliRows.filter(r => toYMD(parseDDMMYYYYToTime(r.tglDelivery)) === state.tglDeliveryFilter);
+  }
+  priorityKoliRows = applyEtaModeFilter(priorityKoliRows, state.estimasiTibaMode, state.estimasiTibaDate);
+  if (state.travelStatusFilter === 'ON_DELIVERY') priorityKoliRows = priorityKoliRows.filter(r => r.onDelivery > 0);
+  else if (state.travelStatusFilter === 'INTRANSIT') priorityKoliRows = priorityKoliRows.filter(r => r.intransit > 0);
+
+  if (isCustomSortValue(state.priorityMode)){
+    priorityKoliRows = applyCustomSort(priorityKoliRows, state.priorityMode);
+  } else {
+    priorityKoliRows = priorityKoliRows.slice().sort((a,b) => {
+      if (state.priorityMode === 'tanggal'){
+        return compareByEstimasiTiba(a.estimasiTiba, b.estimasiTiba);
+      }
+      const pa = statusPriority(a.status), pb = statusPriority(b.status);
+      if (pa !== pb) return pa - pb;
+      return compareByEstimasiTiba(a.estimasiTiba, b.estimasiTiba);
+    });
+  }
+
+  return { itemSummaries, filterOptions, filteredItems, totals, priorityKoliRows, colorGroups: sortedColorGroups };
+}
+
+// [BARU] Data untuk tab "Prioritas Bongkar Inbound" -- SAMA sumbernya dengan Critical &
+// cari koli (per-koli dari DATA TRACKING), TAPI disaring HANYA yang statusnya Critical
+// Lvl 1/2/3 (dilabel ulang jadi Low/Medium/High), tidak ada NORMAL/OVER STOCK di sini.
+function computeBongkarDerived(){
+  const parsedRows = getParsedRows();
+  let rows = parsedRows.filter(r => (r.nomorKoli || r.tanggalKirim) && bongkarPriorityLabel(r.status));
+
+  const totalCriticalCount = rows.length; // sebelum filter tambahan -- buat badge tab
+
+  const f = state.bongkarFilters;
+  const q = f.search.trim().toLowerCase();
+  if (q){
+    rows = rows.filter(r =>
+      (r.nomorPO||'').toLowerCase().includes(q) ||
+      (r.itemName||'').toLowerCase().includes(q) ||
+      (r.resi||'').toLowerCase().includes(q) ||
+      (r.nomorKoli||'').toLowerCase().includes(q)
+    );
+  }
+  if (f.warna.length>0){
+    rows = rows.filter(r => f.warna.includes(r.attrs.warna));
+  }
+  if (f.priorityLevel){
+    rows = rows.filter(r => bongkarPriorityLabel(r.status) === f.priorityLevel);
+  }
+  // [BARU] Filter status perjalanan: Tepat waktu (termasuk "sudah sampai"), Belum sampai, Terlambat
+  if (f.shipmentStatus){
+    rows = rows.filter(r => computeShipmentStatus(r.estimasiTiba, r.intransit) === f.shipmentStatus);
+  }
+  // [BARU] Filter status HPP: apakah HPP untuk PO ini sudah dibuat (sheet DASHBOARD di
+  // file INBOUND, kolom LINK HPP) atau belum.
+  if (f.hppStatus){
+    rows = rows.filter(r => (r.hpp||'').toUpperCase() === f.hppStatus);
+  }
+  rows = applyEtaModeFilter(rows, f.etaMode, f.etaDate);
+
+  if (isCustomSortValue(state.bongkarSortMode)){
+    rows = applyCustomSort(rows, state.bongkarSortMode);
+  } else {
+    rows = rows.slice().sort((a,b) => {
+      const pa = statusPriority(a.status), pb = statusPriority(b.status);
+      if (pa !== pb) return pa - pb;
+      return compareByEstimasiTiba(a.estimasiTiba, b.estimasiTiba);
+    });
+  }
+
+  const warnaOptionsSet = new Set();
+  parsedRows.forEach(r => { if (bongkarPriorityLabel(r.status) && r.attrs.warna) warnaOptionsSet.add(r.attrs.warna); });
+  const warnaOptions = Array.from(warnaOptionsSet).sort();
+
+  // [BARU] Hitung jumlah baris (dari hasil filter saat ini) yang HPP-nya belum dibuat --
+  // dipakai sebagai metric card supaya kelihatan langsung berapa yang perlu dikejar HPP-nya.
+  const belumHppCount = rows.filter(r => (r.hpp||'').toUpperCase().includes('BELUM')).length;
+
+  return { rows, totalCriticalCount, warnaOptions, belumHppCount };
+}
+
+// [ROMBAK] Data untuk tab "Critical Item":
+// - store === '' atau DEFAULT_STORE_KEY -> pakai STATUS TOTAL STOK BASELINE langsung dari
+//   DATA TRACKING (SAMA seperti tab Ringkasan Item), TIDAK butuh file Status Stock ter-upload
+//   sama sekali. Ini yang bikin tab ini selalu ada isinya walau belum upload apapun.
+// - store = nama sheet lain -> baca dari file Status Stock yang di-upload (perilaku lama).
+function computeCriticalItemDerived(){
+  const empty = { rows: [], statusValueOptions: [], counts: {}, warnaOptions: [], totalRows: 0, colorGroups: [] };
+  const f = state.criticalItemFilters;
+  const effectiveStore = f.store || DEFAULT_STORE_KEY;
+  const isDefault = effectiveStore === DEFAULT_STORE_KEY;
+
+  let allRows = [];
+
+  if (isDefault){
+    // [BARU] Sumbernya STATUS TOTAL STOK baseline dari DATA TRACKING -- selalu tersedia,
+    // tidak tergantung upload apapun.
+    const d = computeDerived();
+    allRows = d.itemSummaries
+      .filter(it => it.primaryStatus)
+      .map(it => ({ itemName: it.itemName, status: it.primaryStatus, attrs: it.attrs }));
+  } else {
+    if (!state.statusStockData) return empty;
+    const sheetMap = state.statusStockData.bySheet.get(effectiveStore);
+    if (!sheetMap) return empty;
+    if (!f.statusType) return empty;
+    sheetMap.forEach((rec, itemName) => {
+      let statusVal = '';
+      if (f.statusType === 'total') statusVal = rec.statusTotal;
+      else if (f.statusType === 'od_oh') statusVal = rec.statusOhOd;
+      else if (f.statusType === 'oh') statusVal = rec.statusOh;
+      if (!statusVal) return; // baris tanpa status valid utk jenis ini -- lewati
+      allRows.push({ itemName, status: statusVal, attrs: parseItemName(itemName) });
+    });
+  }
+
+  const statusValueOptions = Array.from(new Set(allRows.map(r=>r.status))).sort((a,b)=>statusPriority(a)-statusPriority(b));
+  const counts = {};
+  allRows.forEach(r => { counts[r.status] = (counts[r.status]||0) + 1; });
+  const warnaOptions = Array.from(new Set(allRows.map(r=>r.attrs.warna).filter(Boolean))).sort();
+
+  let rows = allRows;
+  if (f.statusValue) rows = rows.filter(r => r.status === f.statusValue);
+  if (f.warna.length>0) rows = rows.filter(r => f.warna.includes(r.attrs.warna));
+  const q = f.search.trim().toLowerCase();
+  if (q) rows = rows.filter(r => r.itemName.toLowerCase().includes(q));
+
+  // [BARU] Hierarki Warna > Lengan > Item (mirip Ringkasan Item), supaya tidak
+  // langsung flat semua item -- bisa drill down per warna dulu.
+  const colorMap = new Map();
+  rows.forEach(r => {
+    const warna = r.attrs.warna || '(Tanpa warna)';
+    if (!colorMap.has(warna)) colorMap.set(warna, { warna, items:[], lenganMap:new Map(), criticalCount:0 });
+    const cg = colorMap.get(warna);
+    cg.items.push(r);
+    if (statusPriority(r.status) <= 2) cg.criticalCount++;
+    const lengan = r.attrs.lengan || 'Lainnya';
+    if (!cg.lenganMap.has(lengan)) cg.lenganMap.set(lengan, { lengan, items:[], criticalCount:0 });
+    const lg = cg.lenganMap.get(lengan);
+    lg.items.push(r);
+    if (statusPriority(r.status) <= 2) lg.criticalCount++;
+  });
+  const colorGroups = Array.from(colorMap.values()).map(cg => {
+    const lenganGroups = Array.from(cg.lenganMap.values()).map(lg => {
+      const sortedItems = lg.items.slice().sort((a,b) => SIZE_ORDER.indexOf(a.attrs.ukuran) - SIZE_ORDER.indexOf(b.attrs.ukuran));
+      return { ...lg, items: sortedItems };
+    }).sort((a,b) => a.lengan.localeCompare(b.lengan));
+    return { ...cg, lenganGroups, itemCount: cg.items.length };
+  }).sort((a,b) => a.warna.localeCompare(b.warna));
+
+  rows = rows.slice().sort((a,b) => {
+    const pa = statusPriority(a.status), pb = statusPriority(b.status);
+    if (pa !== pb) return pa - pb;
+    return a.itemName.localeCompare(b.itemName);
+  });
+
+  return { rows, statusValueOptions, counts, warnaOptions, totalRows: allRows.length, colorGroups };
+}
+
+// [ROMBAK] Data untuk tab "Item Tidak Cocok" -- SEKARANG langsung menampilkan SEMUA
+// baris dari sheet UNMATCHED ITEMS (item yang gagal dipetakan Modul 5 ke Master Item
+// Name dari REPORT HARIAN / SURAT JALAN), TIDAK lagi terikat ke file Status Stock yang
+// di-upload -- supaya kesalahan mapping kelihatan dari awal, bukan cuma pas upload.
+function computeUnmatchedDerived(){
+  let rows = state.unmatchedItemsRows.slice();
+  const q = state.unmatchedFilters.search.trim().toLowerCase();
+  if (q){
+    rows = rows.filter(r =>
+      r.itemName.toLowerCase().includes(q) ||
+      (r.nomorPO||'').toLowerCase().includes(q) ||
+      (r.nomorKoli||'').toLowerCase().includes(q) ||
+      (r.catatan||'').toLowerCase().includes(q)
+    );
+  }
+  rows.sort((a,b) => (a.nomorPO||'').localeCompare(b.nomorPO||'') || a.itemName.localeCompare(b.itemName));
+  return { rows, total: state.unmatchedItemsRows.length };
+}
+
+// [BARU] Data untuk tab "On Production" -- rekap target cutting/cutting/finish good/
+// reject/wip per item per PO, sumber sheet ON PRODUCTION (ditulis Modul 5).
+function computeOnProductionDerived(){
+  let rows = state.onProductionRows.slice();
+  const q = state.onProductionFilters.search.trim().toLowerCase();
+  if (q){
+    rows = rows.filter(r =>
+      r.itemName.toLowerCase().includes(q) ||
+      (r.nomorPO||'').toLowerCase().includes(q) ||
+      (r.koli||'').toLowerCase().includes(q)
+    );
+  }
+  rows.sort((a,b) => (a.nomorPO||'').localeCompare(b.nomorPO||'') || a.itemName.localeCompare(b.itemName));
+  const totals = rows.reduce((acc,r) => {
+    acc.targetCutting += r.targetCutting; acc.cutting += r.cutting;
+    acc.finishGood += r.finishGood; acc.reject += r.reject; acc.wip += r.wip;
+    return acc;
+  }, { targetCutting:0, cutting:0, finishGood:0, reject:0, wip:0 });
+  return { rows, total: state.onProductionRows.length, totals };
+}
+
+function exportBongkarXLSX(rows){
+  if (typeof XLSX === 'undefined'){
+    alert('Library export (XLSX) belum termuat, coba lagi sebentar.');
+    return;
+  }
+  const data = rows.map(r => ({
+    'Priority': bongkarPriorityLabel(r.status) || '',
+    'Item': r.itemName,
+    'Warna': r.attrs.warna,
+    'Nomor PO': r.nomorPO,
+    'No. Koli': r.nomorKoli,
+    'Qty On Delivery': r.onDelivery,
+    'Qty Intransit': r.intransit,
+    'Resi': r.resi,
+    'Tanggal Delivery': r.tglDelivery,
+    'Estimasi Tiba': r.estimasiTiba,
+    'Status Perjalanan': computeShipmentStatus(r.estimasiTiba, r.intransit),
+    'Status Stok': r.status,
+    'Status HPP': r.hpp || '',
+  }));
+  const ws = XLSX.utils.json_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Prioritas Bongkar');
+  XLSX.writeFile(wb, 'prioritas-bongkar-inbound-' + toYMD(Date.now()) + '.xlsx');
+}
+
+function metricCard(icon,label,value,tone){
+  return `<div class="metric-card ${tone?'tone-'+tone:''}"><div class="metric-icon">${icon}</div>
+    <div class="metric-value">${fmt(value)}</div><div class="metric-label">${label}</div></div>`;
+}
+
+const ICONS = {
+  package:'&#128230;', clock:'&#9201;', truck:'&#128667;', check:'&#9989;', warn:'&#9888;',
+};
+
+function metricsBlock(qtyPO,wip,onDelivery,intransit){
+  return `<div class="item-metrics">
+    <div class="im-col"><div class="im-lab">Qty PO</div><div class="im-val">${fmt(qtyPO)}</div></div>
+    <div class="im-col"><div class="im-lab">WIP</div><div class="im-val">${fmt(wip)}</div></div>
+    <div class="im-col"><div class="im-lab">Delivery</div><div class="im-val">${fmt(onDelivery)}</div></div>
+    <div class="im-col"><div class="im-lab">Transit</div><div class="im-val">${fmt(intransit)}</div></div>
+  </div>`;
+}
+
+function koliDetailTable(koliRows){
+  if (koliRows.length===0) return `<div style="font-size:12px;color:var(--ink-faint)">Belum ada rincian koli/pengiriman untuk item ini.</div>`;
+  return `<table class="koli-table"><thead><tr><th>Nomor PO</th><th>No. koli</th><th>On delivery</th><th>Intransit</th><th>Keterangan resi</th><th>Tanggal delivery</th><th>Estimasi tiba</th><th>Resi</th><th>Status perjalanan</th><th>Status HPP</th></tr></thead>
+    <tbody>${koliRows.map(r=>{
+      const shipStatus = computeShipmentStatus(r.estimasiTiba, r.intransit);
+      return `<tr><td>${esc(r.nomorPO||'-')}</td><td>${esc(r.nomorKoli||'-')}</td><td>${fmt(r.onDelivery)}</td><td>${fmt(r.intransit)}</td><td>${esc(r.tanggalKirim||'-')}</td><td>${esc(r.tglDelivery||'-')}</td><td>${esc(r.estimasiTiba||'-')}</td><td>${esc(r.resi||'-')}</td><td>${shipStatus?`<span class="${shipmentStatusClass(shipStatus)}">${esc(shipStatus)}</span>`:'-'}</td><td>${r.hpp?`<span class="${hppBadgeClass(r.hpp)}">${esc(r.hpp)}</span>`:'-'}</td></tr>`;
+    }).join('')}</tbody></table>`;
+}
+
+function renderRingkasanTab(d, f, hasActiveFilters){
+  let html = `<div class="metrics-grid">
+    ${metricCard(ICONS.package,'Qty PO',d.totals.qtyPO)}
+    ${metricCard(ICONS.clock,'WIP',d.totals.wip)}
+    ${metricCard(ICONS.truck,'On delivery',d.totals.onDelivery)}
+    ${metricCard(ICONS.truck,'Intransit',d.totals.intransit)}
+    ${metricCard(ICONS.warn,'Item critical',d.totals.critical,'critical')}
+  </div>
+  <div class="filter-bar">
+    <div class="search-wrap"><span class="icon">&#128269;</span>
+      <input id="searchInput" placeholder="Cari nama item atau nomor PO..." value="${esc(f.search)}" />
+    </div>
+    <div class="multiselect" id="warnaMultiselect">
+      <button type="button" class="multiselect-btn" id="warnaMsBtn">
+        ${f.warna.length===0 ? 'Semua warna' : f.warna.length===1 ? esc(f.warna[0]) : `${f.warna.length} warna dipilih`}
+        <span class="ms-caret">&#9662;</span>
+      </button>
+      ${state.warnaDropdownOpen ? `<div class="multiselect-panel" id="warnaMsPanel">
+        ${d.filterOptions.warna.length===0 ? `<div class="ms-empty">Tidak ada opsi warna</div>` : d.filterOptions.warna.map(w=>`
+          <label class="ms-option">
+            <input type="checkbox" data-warna-opt="${esc(w)}" ${f.warna.includes(w)?'checked':''} />
+            ${swatchHtml(w)}
+            <span>${esc(w)}</span>
+          </label>`).join('')}
+      </div>` : ''}
+    </div>
+    <select class="control" id="filterKain"><option value="">Semua kain</option>${d.filterOptions.kain.map(k=>`<option value="${esc(k)}" ${f.kain===k?'selected':''}>${esc(k)}</option>`).join('')}</select>
+    <select class="control" id="filterStatus"><option value="">Semua status</option>${d.filterOptions.status.map(s=>`<option value="${esc(s)}" ${f.status===s?'selected':''}>${esc(s)}</option>`).join('')}</select>
+    <select class="control wide" id="ringkasanSortSelect">
+      <option value="">Urutan: nama warna (A-Z)</option>
+      ${SORT_OPTIONS_RINGKASAN.map(o=>`<option value="${o.value}" ${state.ringkasanSortMode===o.value?'selected':''}>${o.label}</option>`).join('')}
+    </select>
+    ${hasActiveFilters?`<button class="reset-btn" id="resetBtn">&times; Reset</button>`:''}
+  </div>
+  <div class="result-count">Menampilkan ${d.filteredItems.length} dari ${d.itemSummaries.length} item &middot; dikelompokkan jadi ${d.colorGroups.length} warna</div>
+  `;
+
+  if (state.loading && state.rows.length===0){
+    html += `<div class="empty-state"><div class="spin" style="font-size:26px;">&#8635;</div><div>Memuat data...</div></div>`;
+    return html;
+  }
+  if (d.colorGroups.length===0){
+    html += `<div class="empty-state">Tidak ada item yang cocok dengan filter.</div>`;
+    return html;
+  }
+
+  html += `<div class="item-list">` + d.colorGroups.map(cg => {
+    const colorOpen = state.expandedColor.has(cg.warna);
+    return `<div class="color-group">
+      <div class="color-group-head" data-color-toggle="${esc(cg.warna)}">
+        ${swatchHtml(cg.warna)}
+        <div class="item-main">
+          <div class="item-name">${esc(cg.warna)}</div>
+          <div class="item-sub">${cg.itemCount} varian</div>
+        </div>
+        ${metricsBlock(cg.qtyPO, cg.wip, cg.onDelivery, cg.intransit)}
+        <span class="${cg.criticalCount>0?'badge badge-critical':'badge badge-neutral'}">${cg.criticalCount} critical</span>
+        <span class="chev">${colorOpen?'&#9660;':'&#9654;'}</span>
+      </div>
+      ${colorOpen ? cg.lenganGroups.map(lg => {
+        const lenganKey = cg.warna+'::'+lg.lengan;
+        const lenganOpen = state.expandedLengan.has(lenganKey);
+        return `<div class="lengan-group">
+          <div class="lengan-group-head" data-lengan-toggle="${esc(lenganKey)}">
+            <span class="lengan-dot"></span>
+            <div class="item-main">
+              <div class="item-name" style="font-size:12px;">${esc(lg.lengan)}</div>
+              <div class="item-sub">${lg.items.length} ukuran</div>
+            </div>
+            ${metricsBlock(lg.qtyPO, lg.wip, lg.onDelivery, lg.intransit)}
+            <span class="${lg.criticalCount>0?'badge badge-critical':'badge badge-neutral'}">${lg.criticalCount} critical</span>
+            <span class="chev">${lenganOpen?'&#9660;':'&#9654;'}</span>
+          </div>
+          ${lenganOpen ? `<div class="size-list">` + lg.items.map(it => {
+            const isOpen = state.expandedSet.has(it.itemName);
+            const poCountFromKoli = new Set(it.koliRows.map(r=>r.nomorPO).filter(Boolean)).size;
+            return `<div>
+              <div class="size-row-head" data-expand="${esc(it.itemName)}">
+                <div class="item-main">
+                  <div class="item-name" style="font-size:12px;">${esc(it.attrs.ukuran||'-')}</div>
+                  <div class="item-sub">${poCountFromKoli} PO &middot; ${it.koliRows.length} koli${it.attrs.kain?` &middot; ${esc(it.attrs.kain)}`:''}</div>
+                </div>
+                ${metricsBlock(it.qtyPO, it.wip, it.onDelivery, it.intransit)}
+                ${it.statusList[0]?`<span class="${statusClass(it.statusList[0])}">${esc(it.statusList[0])}</span>`:''}
+                <span class="chev">${isOpen?'&#9660;':'&#9654;'}</span>
+              </div>
+              ${isOpen?`<div class="item-detail">${koliDetailTable(it.koliRows)}</div>`:''}
+            </div>`;
+          }).join('') + `</div>` : ''}
+        </div>`;
+      }).join('') : ''}
+    </div>`;
+  }).join('') + `</div>`;
+
+  return html;
+}
+
+function renderCriticalTab(d){
+  const hasActiveDateFilters = Boolean(state.tglDeliveryFilter) || state.estimasiTibaMode!=='semua' || Boolean(state.travelStatusFilter);
+  let html = `<div class="filter-bar">
+    <div class="filter-bar-row">
+      <div class="search-wrap"><span class="icon">&#128269;</span>
+        <input id="koliSearchInput" placeholder="Cari nomor koli, AWB/STT, atau nama item..." value="${esc(state.koliQuery)}" />
+      </div>
+      <select class="control wide" id="prioritySortSelect">
+        <option value="prioritas" ${state.priorityMode==='prioritas'?'selected':''}>Prioritas critical dulu, lalu tanggal tiba</option>
+        <option value="tanggal" ${state.priorityMode==='tanggal'?'selected':''}>Tanggal tiba saja (semua status)</option>
+        ${SORT_OPTIONS_KOLI_TAMBAHAN.map(o=>`<option value="${o.value}" ${state.priorityMode===o.value?'selected':''}>${o.label}</option>`).join('')}
+      </select>
+    </div>
+    <div class="filter-bar-row">
+      <span class="filter-label">Tgl delivery</span>
+      <input type="date" class="control" id="filterTglDelivery" value="${esc(state.tglDeliveryFilter)}" />
+      <span class="filter-label">Estimasi tiba</span>
+      <select class="control" id="filterEstimasiMode">
+        <option value="semua" ${state.estimasiTibaMode==='semua'?'selected':''}>Semua</option>
+        <option value="terlewat" ${state.estimasiTibaMode==='terlewat'?'selected':''}>Terlewat</option>
+        <option value="hari_ini" ${state.estimasiTibaMode==='hari_ini'?'selected':''}>Hari ini</option>
+        <option value="besok" ${state.estimasiTibaMode==='besok'?'selected':''}>Besok</option>
+        <option value="tanggal" ${state.estimasiTibaMode==='tanggal'?'selected':''}>Tanggal tertentu...</option>
+      </select>
+      ${state.estimasiTibaMode==='tanggal'?`<input type="date" class="control" id="filterEstimasiDate" value="${esc(state.estimasiTibaDate)}" />`:''}
+      <span class="filter-label">Status pengiriman</span>
+      <select class="control" id="filterTravelStatus">
+        <option value="">Semua</option>
+        <option value="ON_DELIVERY" ${state.travelStatusFilter==='ON_DELIVERY'?'selected':''}>Masih on delivery</option>
+        <option value="INTRANSIT" ${state.travelStatusFilter==='INTRANSIT'?'selected':''}>Sudah intransit</option>
+      </select>
+      ${hasActiveDateFilters?`<button class="reset-btn" id="resetDateBtn">&times; Reset tanggal</button>`:''}
+    </div>
+  </div>`;
+
+  html += `<div class="result-count">Menampilkan ${d.priorityKoliRows.length} baris koli</div>`;
+
+  if (d.priorityKoliRows.length===0){
+    html += `<div class="empty-state">${state.koliQuery.trim() || hasActiveDateFilters ? 'Tidak ditemukan koli dengan kriteria itu.' : 'Belum ada data koli.'}</div>`;
+    return html;
+  }
+
+  let lastPriorityLabel = null;
+  html += `<div class="item-list">` + d.priorityKoliRows.map(r => {
+    let dividerHtml = '';
+    if (state.priorityMode==='prioritas'){
+      const pri = statusPriority(r.status);
+      const label = STATUS_PRIORITY_ORDER[pri] || 'Status lain';
+      if (label !== lastPriorityLabel){
+        lastPriorityLabel = label;
+        dividerHtml = `<div class="priority-divider">${esc(label)}</div>`;
+      }
+    }
+    const pri = Math.min(statusPriority(r.status), 4);
+    // [BARU] Penanda perjalanan sederhana (bukan soal terlambat/tidak, cuma posisi
+    // fisiknya): masih On Delivery atau sudah tercatat Intransit, plus qty gabungan.
+    const qtyGabungan = r.onDelivery + r.intransit;
+    const travelLabel = r.onDelivery > 0 ? 'MASIH ON DELIVERY' : (r.intransit > 0 ? 'SUDAH INTRANSIT' : '');
+    const travelClass = r.onDelivery > 0 ? 'badge badge-pending' : (r.intransit > 0 ? 'badge badge-ontime' : 'badge badge-neutral');
+    return dividerHtml + `<div class="item-row">
+      <div class="item-row-head static">
+        <span class="pri-strip pri-${pri}"></span>
+        ${swatchHtml(r.attrs.warna)}
+        <div class="item-main">
+          <div class="item-name">${esc(r.itemName)}</div>
+          <div class="item-tags">
+            <span class="tag">${esc(r.nomorPO||'-')}</span>
+            ${r.attrs.kain?`<span class="tag">${esc(r.attrs.kain)}</span>`:''}
+            ${r.resi?`<span class="tag">${esc(r.resi)}</span>`:''}
+          </div>
+        </div>
+        <div class="item-metrics">
+          <div class="im-col"><div class="im-lab">Qty</div><div class="im-val">${fmt(qtyGabungan)}</div></div>
+          <div class="im-col"><div class="im-lab">No. koli</div><div class="im-val">${esc(r.nomorKoli||'-')}</div></div>
+          <div class="im-col"><div class="im-lab">Delivery</div><div class="im-val">${esc(r.tglDelivery||'-')}</div></div>
+          <div class="im-col"><div class="im-lab">Tiba</div><div class="im-val">${esc(r.estimasiTiba||'-')}</div></div>
+        </div>
+        ${r.hpp?`<span class="${hppBadgeClass(r.hpp)}">${esc(r.hpp)}</span>`:''}
+        ${travelLabel?`<span class="${travelClass}">${esc(travelLabel)}</span>`:''}
+        ${r.status?`<span class="${statusClass(r.status)}">${esc(r.status)}</span>`:''}
+      </div>
+    </div>`;
+  }).join('') + `</div>`;
+
+  return html;
+}
+
+// [ROMBAK TOTAL] "Prioritas Bongkar Inbound": turunan data DATA TRACKING (sama seperti
+// Critical & cari koli), disaring HANYA Critical Lvl 1/2/3 (dilabel High/Medium/Low),
+// dengan filter utama Estimasi Tiba + filter pendukung (cari PO/Item/Resi, Warna, Level),
+// dan tombol Export XLSX untuk hasil yang sedang difilter.
+function renderBongkarTab(){
+  const db = computeBongkarDerived();
+  const fb = state.bongkarFilters;
+  const hasActiveBongkarFilters = Boolean(fb.search) || fb.warna.length>0 || Boolean(fb.priorityLevel) || fb.etaMode!=='semua' || Boolean(fb.shipmentStatus) || Boolean(fb.hppStatus);
+
+  const countHigh = db.rows.filter(r=>bongkarPriorityLabel(r.status)==='High').length;
+  const countMedium = db.rows.filter(r=>bongkarPriorityLabel(r.status)==='Medium').length;
+  const countLow = db.rows.filter(r=>bongkarPriorityLabel(r.status)==='Low').length;
+
+  let html = `<div class="metrics-grid">
+    ${metricCard(ICONS.warn,'High priority',countHigh,'critical')}
+    ${metricCard(ICONS.clock,'Medium priority',countMedium)}
+    ${metricCard(ICONS.check,'Low priority',countLow)}
+    ${metricCard(ICONS.package,'Total baris tampil',db.rows.length)}
+    ${metricCard(ICONS.warn,'Belum ada HPP',db.belumHppCount,db.belumHppCount>0?'critical':undefined)}
+  </div>`;
+
+  html += `<div class="filter-bar">
+    <div class="filter-bar-row">
+      <div class="search-wrap"><span class="icon">&#128269;</span>
+        <input id="bongkarSearchInput" placeholder="Cari nomor PO, item, atau resi..." value="${esc(fb.search)}" />
+      </div>
+      <div class="multiselect" id="bongkarWarnaMultiselect">
+        <button type="button" class="multiselect-btn" id="bongkarWarnaMsBtn">
+          ${fb.warna.length===0 ? 'Semua warna' : fb.warna.length===1 ? esc(fb.warna[0]) : `${fb.warna.length} warna dipilih`}
+          <span class="ms-caret">&#9662;</span>
+        </button>
+        ${state.bongkarWarnaDropdownOpen ? `<div class="multiselect-panel" id="bongkarWarnaMsPanel">
+          ${db.warnaOptions.length===0 ? `<div class="ms-empty">Tidak ada opsi warna</div>` : db.warnaOptions.map(w=>`
+            <label class="ms-option">
+              <input type="checkbox" data-bongkar-warna-opt="${esc(w)}" ${fb.warna.includes(w)?'checked':''} />
+              ${swatchHtml(w)}
+              <span>${esc(w)}</span>
+            </label>`).join('')}
+        </div>` : ''}
+      </div>
+      <select class="control" id="bongkarFilterPriority">
+        <option value="">Semua level</option>
+        <option value="High" ${fb.priorityLevel==='High'?'selected':''}>High (Critical Lvl 3)</option>
+        <option value="Medium" ${fb.priorityLevel==='Medium'?'selected':''}>Medium (Critical Lvl 2)</option>
+        <option value="Low" ${fb.priorityLevel==='Low'?'selected':''}>Low (Critical Lvl 1)</option>
+      </select>
+    </div>
+    <div class="filter-bar-row">
+      <span class="filter-label">Estimasi tiba</span>
+      <select class="control" id="bongkarFilterEtaMode">
+        <option value="semua" ${fb.etaMode==='semua'?'selected':''}>Semua</option>
+        <option value="terlewat" ${fb.etaMode==='terlewat'?'selected':''}>Terlewat</option>
+        <option value="hari_ini" ${fb.etaMode==='hari_ini'?'selected':''}>Hari ini</option>
+        <option value="besok" ${fb.etaMode==='besok'?'selected':''}>Besok</option>
+        <option value="tanggal" ${fb.etaMode==='tanggal'?'selected':''}>Tanggal tertentu...</option>
+      </select>
+      ${fb.etaMode==='tanggal'?`<input type="date" class="control" id="bongkarFilterEtaDate" value="${esc(fb.etaDate)}" />`:''}
+      <span class="filter-label">Status perjalanan</span>
+      <select class="control" id="bongkarFilterShipmentStatus">
+        <option value="">Semua</option>
+        <option value="TEPAT WAKTU" ${fb.shipmentStatus==='TEPAT WAKTU'?'selected':''}>Tepat waktu / sudah sampai</option>
+        <option value="BELUM SAMPAI" ${fb.shipmentStatus==='BELUM SAMPAI'?'selected':''}>Belum sampai</option>
+        <option value="TERLAMBAT" ${fb.shipmentStatus==='TERLAMBAT'?'selected':''}>Terlambat</option>
+      </select>
+      <span class="filter-label">HPP</span>
+      <select class="control" id="bongkarFilterHpp">
+        <option value="">Semua</option>
+        <option value="ADA HPP" ${fb.hppStatus==='ADA HPP'?'selected':''}>Ada HPP</option>
+        <option value="BELUM ADA HPP" ${fb.hppStatus==='BELUM ADA HPP'?'selected':''}>Belum ada HPP</option>
+      </select>
+      ${hasActiveBongkarFilters?`<button class="reset-btn" id="bongkarResetBtn">&times; Reset filter</button>`:''}
+    </div>
+    <div class="filter-bar-row">
+      <select class="control wide" id="bongkarSortSelect">
+        <option value="prioritas" ${state.bongkarSortMode==='prioritas'?'selected':''}>Urutan default: prioritas dulu, lalu tanggal tiba</option>
+        ${SORT_OPTIONS_KOLI_TAMBAHAN.map(o=>`<option value="${o.value}" ${state.bongkarSortMode===o.value?'selected':''}>${o.label}</option>`).join('')}
+      </select>
+      <span style="flex:1 1 auto"></span>
+      <button class="upload-btn" id="bongkarExportBtn">&#11015; Export ke Excel (.xlsx)</button>
+    </div>
+  </div>`;
+
+  html += `<div class="result-count">Menampilkan ${db.rows.length} dari ${db.totalCriticalCount} baris koli critical (Lvl 1/2/3)</div>`;
+
+  if (db.rows.length===0){
+    html += `<div class="empty-state">${hasActiveBongkarFilters ? 'Tidak ada baris critical yang cocok dengan filter ini.' : 'Tidak ada barang berstatus critical saat ini.'}</div>`;
+    return html;
+  }
+
+  let lastLabel = null;
+  html += `<div class="item-list">` + db.rows.map(r => {
+    const label = bongkarPriorityLabel(r.status);
+    let dividerHtml = '';
+    if (state.bongkarSortMode === 'prioritas'){
+      const dividerText = label + ' priority';
+      if (dividerText !== lastLabel){
+        lastLabel = dividerText;
+        dividerHtml = `<div class="priority-divider">${esc(dividerText)}</div>`;
+      }
+    }
+    const pri = statusPriority(r.status);
+    const shipStatus = computeShipmentStatus(r.estimasiTiba, r.intransit);
+    // [BARU] Qty gabungan -- cuma salah satu (On Delivery ATAU Intransit) yang terisi,
+    // tidak pernah dua-duanya sekaligus, dan WIP TIDAK ikut dihitung di sini.
+    const qtyGabungan = r.onDelivery + r.intransit;
+    // [BARU] Status perjalanan sederhana: masih di perjalanan (On Delivery) atau sudah
+    // tercatat Intransit (lebih dekat ke gudang).
+    const travelLabel = r.onDelivery > 0 ? 'MASIH ON DELIVERY' : (r.intransit > 0 ? 'SUDAH INTRANSIT' : '');
+    const travelClass = r.onDelivery > 0 ? 'badge badge-pending' : (r.intransit > 0 ? 'badge badge-ontime' : 'badge badge-neutral');
+    const rowKey = r.itemName + '::' + r.nomorPO + '::' + r.nomorKoli;
+    const isOpen = state.expandedBongkarSet.has(rowKey);
+    return dividerHtml + `<div class="item-row">
+      <div class="item-row-head" data-bongkar-expand="${esc(rowKey)}">
+        <span class="pri-strip pri-${pri}"></span>
+        ${swatchHtml(r.attrs.warna)}
+        <div class="item-main">
+          <div class="item-name">${esc(r.itemName)}</div>
+          <div class="item-tags">
+            <span class="tag">${esc(r.nomorPO||'-')}</span>
+            ${r.attrs.kain?`<span class="tag">${esc(r.attrs.kain)}</span>`:''}
+            ${r.resi?`<span class="tag">${esc(r.resi)}</span>`:''}
+          </div>
+        </div>
+        <div class="item-metrics">
+          <div class="im-col"><div class="im-lab">Qty</div><div class="im-val">${fmt(qtyGabungan)}</div></div>
+          <div class="im-col"><div class="im-lab">No. koli</div><div class="im-val">${esc(r.nomorKoli||'-')}</div></div>
+          <div class="im-col"><div class="im-lab">Delivery</div><div class="im-val">${esc(r.tglDelivery||'-')}</div></div>
+          <div class="im-col"><div class="im-lab">Tiba</div><div class="im-val">${esc(r.estimasiTiba||'-')}</div></div>
+        </div>
+        ${shipStatus?`<span class="${shipmentStatusClass(shipStatus)}">${esc(shipStatus)}</span>`:''}
+        ${r.hpp?`<span class="${hppBadgeClass(r.hpp)}">${esc(r.hpp)}</span>`:''}
+        <span class="${bongkarPriorityBadgeClass(label)}">${esc(label)}</span>
+        <span class="chev">${isOpen?'&#9660;':'&#9654;'}</span>
+      </div>
+      ${isOpen?`<div class="item-detail">
+        <table class="koli-table">
+          <thead><tr><th>Qty on delivery</th><th>Qty intransit</th><th>Status</th><th>Status HPP</th></tr></thead>
+          <tbody><tr>
+            <td>${fmt(r.onDelivery)}</td>
+            <td>${fmt(r.intransit)}</td>
+            <td>${travelLabel?`<span class="${travelClass}">${esc(travelLabel)}</span>`:'-'}</td>
+            <td>${r.hpp?`<span class="${hppBadgeClass(r.hpp)}">${esc(r.hpp)}</span>`:'-'}</td>
+          </tr></tbody>
+        </table>
+      </div>`:''}
+    </div>`;
+  }).join('') + `</div>`;
+
+  return html;
+}
+
+// [ROMBAK] Tab "Critical Item" -- SEKARANG SELALU ada isinya, karena defaultnya (store
+// "" / DEFAULT_STORE_KEY) mengambil status BASELINE (STATUS TOTAL STOK) langsung dari
+// DATA TRACKING, TANPA butuh file Status Stock ter-upload. Kalau ada file ter-upload,
+// pilihan store lain (per toko/DC) tetap bisa dipakai seperti sebelumnya.
+function renderCriticalItemTab(){
+  const f = state.criticalItemFilters;
+  const effectiveStore = f.store || DEFAULT_STORE_KEY;
+  const isDefault = effectiveStore === DEFAULT_STORE_KEY;
+  const ci = computeCriticalItemDerived();
+  const statusTypeOptions = (!isDefault) ? getStatusTypeOptions(effectiveStore) : [];
+  const hasActiveFilters = Boolean(f.statusValue) || f.warna.length>0 || Boolean(f.search);
+
+  let html = `<div class="filter-bar">
+    <div class="filter-bar-row">
+      <span class="filter-label">Store</span>
+      <select class="control wide" id="ciFilterStore">
+        <option value="${DEFAULT_STORE_KEY}" ${isDefault?'selected':''}>Default (Data Tracking -- STATUS TOTAL STOK)</option>
+        ${state.statusStockData ? state.statusStockData.sheetNames.map(s=>`<option value="${esc(s)}" ${effectiveStore===s?'selected':''}>${esc(s)}</option>`).join('') : ''}
+      </select>
+      ${!isDefault ? `
+        <span class="filter-label">Jenis status</span>
+        <select class="control" id="ciFilterStatusType">
+          <option value="">Pilih jenis status...</option>
+          ${statusTypeOptions.map(o=>`<option value="${o.value}" ${f.statusType===o.value?'selected':''}>${esc(o.label)}</option>`).join('')}
+        </select>
+      ` : ''}
+    </div>
+    ${!state.statusStockData ? `<div class="filter-bar-row"><span style="font-size:11.5px;color:var(--ink-faint);">&#128202; Ini status default dari Data Tracking. Klik <strong>Upload Status Stock</strong> di atas kalau mau lihat status per Store/DC.</span></div>` : ''}
+  </div>`;
+
+  if (!isDefault && !f.statusType){
+    html += `<div class="empty-state">Pilih Jenis Status dulu untuk melihat isinya.</div>`;
+    return html;
+  }
+
+  html += `<div class="section-label" style="font-family:'Space Grotesk',sans-serif;font-size:15px;font-weight:600;margin:4px 0 10px;">Sheet: ${esc(isDefault ? 'Default (Data Tracking)' : effectiveStore)}</div>`;
+
+  const critCount = (ci.counts['CRITICAL LVL 3']||0) + (ci.counts['CRITICAL LVL 2']||0) + (ci.counts['CRITICAL LVL 1']||0);
+  const normalCount = ci.counts['NORMAL']||0;
+  const overCount = ci.counts['OVER STOCK']||0;
+  html += `<div class="metrics-grid">
+    ${metricCard(ICONS.package,'Total item',ci.totalRows)}
+    ${metricCard(ICONS.warn,'Critical (semua level)',critCount,'critical')}
+    ${metricCard(ICONS.check,'Normal',normalCount)}
+    ${metricCard(ICONS.truck,'Over stock',overCount)}
+  </div>`;
+
+  html += `<div class="filter-bar">
+    <div class="search-wrap"><span class="icon">&#128269;</span>
+      <input id="ciSearchInput" placeholder="Cari nama item..." value="${esc(f.search)}" />
+    </div>
+    <div class="multiselect" id="ciWarnaMultiselect">
+      <button type="button" class="multiselect-btn" id="ciWarnaMsBtn">
+        ${f.warna.length===0 ? 'Semua warna' : f.warna.length===1 ? esc(f.warna[0]) : `${f.warna.length} warna dipilih`}
+        <span class="ms-caret">&#9662;</span>
+      </button>
+      ${state.criticalItemWarnaDropdownOpen ? `<div class="multiselect-panel" id="ciWarnaMsPanel">
+        ${ci.warnaOptions.length===0 ? `<div class="ms-empty">Tidak ada opsi warna</div>` : ci.warnaOptions.map(w=>`
+          <label class="ms-option">
+            <input type="checkbox" data-ci-warna-opt="${esc(w)}" ${f.warna.includes(w)?'checked':''} />
+            ${swatchHtml(w)}
+            <span>${esc(w)}</span>
+          </label>`).join('')}
+      </div>` : ''}
+    </div>
+    <select class="control" id="ciFilterStatusValue">
+      <option value="">Semua status</option>
+      ${ci.statusValueOptions.map(s=>`<option value="${esc(s)}" ${f.statusValue===s?'selected':''}>${esc(s)}</option>`).join('')}
+    </select>
+    ${hasActiveFilters?`<button class="reset-btn" id="ciResetBtn">&times; Reset</button>`:''}
+  </div>`;
+
+  html += `<div class="result-count">Menampilkan ${ci.rows.length} dari ${ci.totalRows} item di sheet ini &middot; dikelompokkan jadi ${ci.colorGroups.length} warna</div>`;
+
+  if (ci.colorGroups.length===0){
+    html += `<div class="empty-state">Tidak ada item yang cocok dengan filter.</div>`;
+    return html;
+  }
+
+  html += `<div class="item-list">` + ci.colorGroups.map(cg => {
+    const colorOpen = state.expandedCiColor.has(cg.warna);
+    return `<div class="color-group">
+      <div class="color-group-head" data-ci-color-toggle="${esc(cg.warna)}">
+        ${swatchHtml(cg.warna)}
+        <div class="item-main">
+          <div class="item-name">${esc(cg.warna)}</div>
+          <div class="item-sub">${cg.itemCount} item</div>
+        </div>
+        <span class="${cg.criticalCount>0?'badge badge-critical':'badge badge-neutral'}">${cg.criticalCount} critical</span>
+        <span class="chev">${colorOpen?'&#9660;':'&#9654;'}</span>
+      </div>
+      ${colorOpen ? cg.lenganGroups.map(lg => {
+        const lenganKey = cg.warna+'::'+lg.lengan;
+        const lenganOpen = state.expandedCiLengan.has(lenganKey);
+        return `<div class="lengan-group">
+          <div class="lengan-group-head" data-ci-lengan-toggle="${esc(lenganKey)}">
+            <span class="lengan-dot"></span>
+            <div class="item-main">
+              <div class="item-name" style="font-size:12px;">${esc(lg.lengan)}</div>
+              <div class="item-sub">${lg.items.length} item</div>
+            </div>
+            <span class="${lg.criticalCount>0?'badge badge-critical':'badge badge-neutral'}">${lg.criticalCount} critical</span>
+            <span class="chev">${lenganOpen?'&#9660;':'&#9654;'}</span>
+          </div>
+          ${lenganOpen ? `<div class="size-list">` + lg.items.map(r => `
+            <div class="size-row-head">
+              <div class="item-main">
+                <div class="item-name" style="font-size:12px;">${esc(r.attrs.ukuran||'-')}</div>
+                <div class="item-tags">${r.attrs.kain?`<span class="tag">${esc(r.attrs.kain)}</span>`:''}</div>
+              </div>
+              <div class="item-sub" style="flex-shrink:0;max-width:260px;">${esc(r.itemName)}</div>
+              <span class="${statusClass(r.status)}">${esc(r.status)}</span>
+            </div>`).join('') + `</div>` : ''}
+        </div>`;
+      }).join('') : ''}
+    </div>`;
+  }).join('') + `</div>`;
+
+  return html;
+}
+
+
+// [ROMBAK] Tab "Item Tidak Cocok" -- SEKARANG menampilkan LANGSUNG semua baris dari
+// sheet UNMATCHED ITEMS (ditulis Modul 5, berisi item dari REPORT HARIAN/SURAT JALAN
+// yang GAGAL dipetakan ke Master Item Name), independen dari file Status Stock yang
+// di-upload. Ini supaya kesalahan mapping langsung kelihatan sejak dashboard dibuka,
+// bukan cuma pas ada yang upload Status Stock.
+// [BARU] Tab "On Production" -- rekap target cutting/cutting/finish good/reject/wip per
+// item per PO, langsung dari sheet ON PRODUCTION (ditulis Modul 5).
+function renderOnProductionTab(){
+  const op = computeOnProductionDerived();
+  const f = state.onProductionFilters;
+
+  let html = `<div class="filter-bar">
+    <div class="search-wrap"><span class="icon">&#128269;</span>
+      <input id="opSearchInput" placeholder="Cari nama item atau nomor PO..." value="${esc(f.search)}" />
+    </div>
+  </div>`;
+
+  html += `<div class="metrics-grid">
+    ${metricCard(ICONS.package,'Target cutting',op.totals.targetCutting)}
+    ${metricCard(ICONS.package,'Cutting',op.totals.cutting)}
+    ${metricCard(ICONS.check,'Finish good',op.totals.finishGood)}
+    ${metricCard(ICONS.warn,'Reject',op.totals.reject,op.totals.reject>0?'critical':undefined)}
+    ${metricCard(ICONS.clock,'WIP',op.totals.wip)}
+  </div>`;
+
+  if (state.onProductionLoadError){
+    html += `<div class="error-banner">${ICONS.warn} ${esc(state.onProductionLoadError)}</div>`;
+  }
+
+  html += `<div class="result-count">Menampilkan ${op.rows.length} dari ${op.total} baris on production</div>`;
+
+  if (state.loading && state.onProductionRows.length===0 && !state.onProductionLoadError){
+    html += `<div class="empty-state"><div class="spin" style="font-size:26px;">&#8635;</div><div>Memuat data...</div></div>`;
+    return html;
+  }
+  if (op.rows.length===0){
+    html += `<div class="empty-state">${f.search ? 'Tidak ada yang cocok dengan pencarian.' : 'Belum ada data on production.'}</div>`;
+    return html;
+  }
+
+  html += `<div class="item-list">` + op.rows.map(r => `
+    <div class="item-row">
+      <div class="item-row-head static">
+        <div class="item-main">
+          <div class="item-name">${esc(r.itemName)}</div>
+          <div class="item-tags">
+            <span class="tag">${esc(r.nomorPO||'-')}</span>
+            ${r.koli?`<span class="tag">Koli ${esc(r.koli)}</span>`:''}
+          </div>
+        </div>
+        <div class="item-metrics">
+          <div class="im-col"><div class="im-lab">Target</div><div class="im-val">${fmt(r.targetCutting)}</div></div>
+          <div class="im-col"><div class="im-lab">Cutting</div><div class="im-val">${fmt(r.cutting)}</div></div>
+          <div class="im-col"><div class="im-lab">FG</div><div class="im-val">${fmt(r.finishGood)}</div></div>
+          <div class="im-col"><div class="im-lab">Reject</div><div class="im-val">${fmt(r.reject)}</div></div>
+          <div class="im-col"><div class="im-lab">WIP</div><div class="im-val">${fmt(r.wip)}</div></div>
+        </div>
+      </div>
+    </div>`).join('') + `</div>`;
+
+  return html;
+}
+
+
+function renderUnmatchedTab(){
+  const um = computeUnmatchedDerived();
+  const f = state.unmatchedFilters;
+
+  let html = `<div class="filter-bar">
+    <div class="search-wrap"><span class="icon">&#128269;</span>
+      <input id="umSearchInput" placeholder="Cari nama item, nomor PO, no. koli, atau catatan..." value="${esc(f.search)}" />
+    </div>
+  </div>`;
+
+  html += `<div class="metrics-grid">
+    ${metricCard(ICONS.warn,'Total item gagal mapping',um.total,'critical')}
+  </div>`;
+
+  if (state.unmatchedItemsLoadError){
+    html += `<div class="error-banner">${ICONS.warn} ${esc(state.unmatchedItemsLoadError)}</div>`;
+  }
+
+  html += `<div class="result-count">Menampilkan ${um.rows.length} dari ${um.total} item yang gagal dipetakan ke Master Item Name (sumber: sheet UNMATCHED ITEMS)</div>`;
+
+  if (state.loading && state.unmatchedItemsRows.length===0 && !state.unmatchedItemsLoadError){
+    html += `<div class="empty-state"><div class="spin" style="font-size:26px;">&#8635;</div><div>Memuat data...</div></div>`;
+    return html;
+  }
+  if (um.rows.length===0){
+    html += `<div class="empty-state">${f.search ? 'Tidak ada yang cocok dengan pencarian.' : 'Tidak ada item yang gagal dipetakan saat ini. &#127881;'}</div>`;
+    return html;
+  }
+
+  html += `<div class="item-list">` + um.rows.map(r => `
+    <div class="item-row">
+      <div class="item-row-head static">
+        <div class="item-main">
+          <div class="item-name">${esc(r.itemName)}</div>
+          <div class="item-tags">
+            <span class="tag">${esc(r.nomorPO||'-')}</span>
+            ${r.nomorKoli?`<span class="tag">Koli ${esc(r.nomorKoli)}</span>`:''}
+          </div>
+          <div class="item-sub">${esc(r.catatan||'-')}</div>
+        </div>
+        <div class="item-metrics">
+          <div class="im-col"><div class="im-lab">Qty</div><div class="im-val">${fmt(r.qty)}</div></div>
+        </div>
+      </div>
+    </div>`).join('') + `</div>`;
+
+  return html;
+}
+
+function renderDefaultStatusMarkerBanner(){
+  if (!state.defaultStatusMarker) return '';
+  const m = state.defaultStatusMarker;
+  let waktuStr = '';
+  try{ waktuStr = new Date(m.updatedAt).toLocaleString('id-ID'); }catch(e){ waktuStr = m.updatedAt; }
+  return `<div style="font-size:11.5px;color:var(--ink-soft);background:var(--neutral-bg);border-radius:7px;padding:6px 11px;margin-bottom:10px;">
+    &#128204; Default STATUS STOCK saat ini dari: <strong>${esc(m.store)}</strong> &middot; ${esc(m.statusTypeLabel)} &middot; ${m.itemCount} item &middot; diupdate ${esc(waktuStr)}
+  </div>`;
+}
+
+function renderStatusStockFilterBar(){
+  if (!state.statusStockData){
+    return renderDefaultStatusMarkerBanner() + `<div class="filter-bar" style="margin-bottom:10px;">
+      <span style="font-size:12px;color:var(--ink-faint);">&#128202; Status default sudah otomatis termuat dari sheet STATUS STOCK (tanpa perlu upload). Klik <strong>Upload Status Stock</strong> di atas kalau mau lihat/atur status per toko/DC tertentu sebagai overlay.</span>${state.statusStockDefaultLoadError?`<br/><span style="font-size:11.5px;color:var(--critical-fg);">${ICONS.warn} ${esc(state.statusStockDefaultLoadError)}</span>`:''}
+    </div>`;
+  }
+  const storeOptions = state.statusStockData.sheetNames;
+  const statusTypeOptions = state.statusFilterStore ? getStatusTypeOptions(state.statusFilterStore) : [];
+  const overlayActive = Boolean(state.statusFilterStore && state.statusFilterStatusType);
+  const activeLabel = overlayActive ? (getStatusTypeOptions(state.statusFilterStore).find(o=>o.value===state.statusFilterStatusType)||{}).label : '';
+
+  let html = renderDefaultStatusMarkerBanner();
+  html += `<div class="filter-bar" style="${overlayActive?'background:var(--accent-soft); border:1px solid var(--accent); border-radius:8px; padding:9px 12px;':'margin-bottom:10px;'}">
+    <span class="filter-label">Status stock</span>
+    <select class="control" id="statusFilterStoreSelect">
+      <option value="">(pakai default Data Tracking)</option>
+      ${storeOptions.map(s=>`<option value="${esc(s)}" ${state.statusFilterStore===s?'selected':''}>${esc(s)}</option>`).join('')}
+    </select>
+    ${state.statusFilterStore ? `
+      <select class="control" id="statusFilterStatusTypeSelect">
+        <option value="">Pilih jenis status...</option>
+        ${statusTypeOptions.map(o=>`<option value="${o.value}" ${state.statusFilterStatusType===o.value?'selected':''}>${esc(o.label)}</option>`).join('')}
+      </select>
+    ` : ''}
+    ${overlayActive ? `<span class="badge badge-critical">Overlay aktif: ${esc(state.statusFilterStore)} &middot; ${esc(activeLabel)}</span>
+      <button class="reset-btn" id="statusOverlayResetBtn">&times; Kembali ke default</button>
+      <button class="refresh-btn" id="pushStatusStockBtn" ${state.statusStockUpdating?'disabled':''}>${state.statusStockUpdating?'Mengirim...':'&#128228; Update Status Stock (jadi default)'}</button>` : ''}
+    <span style="font-size:11px;color:var(--ink-faint);margin-left:auto;">File: ${esc(state.statusStockFileName)}</span>
+  </div>`;
+  return html;
+}
+
+function render(){
+  const d = computeDerived();
+  const f = state.filters;
+  const hasActiveFilters = Boolean(f.search) || f.warna.length>0 || Boolean(f.kain) || Boolean(f.status);
+  const activeId = document.activeElement ? document.activeElement.id : null;
+  const activeSelStart = ['searchInput','koliSearchInput','bongkarSearchInput','ciSearchInput','opSearchInput','umSearchInput'].includes(activeId) && document.activeElement.selectionStart!=null
+    ? document.activeElement.selectionStart : null;
+
+  const dbForCount = computeBongkarDerived();
+  const umForCount = computeUnmatchedDerived();
+
+  let html = `
+    <div class="dash-header">
+      <div>
+        <div class="eyebrow">GARMENT INVENTORY OPS</div>
+        <h1 class="title">Data tracking stock dari vendor ke DC</h1>
+      </div>
+      <div class="header-actions">
+        ${state.lastUpdated ? `<span class="updated-at">Update: ${state.lastUpdated.toLocaleTimeString('id-ID')}</span>` : ''}
+        <input type="file" id="statusStockFileInput" accept=".xlsx,.xls" style="display:none" />
+        <button class="upload-btn" id="statusStockUploadBtn">&#128202; Upload Status Stock</button>
+        <button class="refresh-btn" id="refreshBtn" ${state.loading?'disabled':''}><span class="${state.loading?'spin':''}">&#8635;</span> ${state.loading?'Memuat':'Refresh'}</button>
+      </div>
+    </div>
+    ${state.error ? `<div class="error-banner">${ICONS.warn} ${esc(state.error)} Pastikan sheet masih ter-publish ke web dan Anda buka file ini lewat browser (bukan dari dalam Claude).</div>` : ''}
+    <div class="tabs">
+      <button class="tab-btn ${state.tab==='ringkasan'?'active':''}" data-tab="ringkasan">Ringkasan item</button>
+      <button class="tab-btn ${state.tab==='critical'?'active':''}" data-tab="critical">
+        Critical &amp; cari koli ${d.totals.critical>0?`<span class="tab-count">${d.totals.critical}</span>`:''}
+      </button>
+      <button class="tab-btn ${state.tab==='bongkar'?'active':''}" data-tab="bongkar">
+        Prioritas bongkar inbound ${dbForCount.totalCriticalCount>0?`<span class="tab-count">${dbForCount.totalCriticalCount}</span>`:''}
+      </button>
+      <button class="tab-btn ${state.tab==='criticalitem'?'active':''}" data-tab="criticalitem">Critical item</button>
+      <button class="tab-btn ${state.tab==='onproduction'?'active':''}" data-tab="onproduction">On production</button>
+      <button class="tab-btn ${state.tab==='unmatched'?'active':''}" data-tab="unmatched">
+        Item tidak cocok ${umForCount.total>0?`<span class="tab-count">${umForCount.total}</span>`:''}
+      </button>
+    </div>
+  `;
+
+  if (state.tab !== 'criticalitem' && state.tab !== 'unmatched' && state.tab !== 'onproduction') html += renderStatusStockFilterBar();
+
+  if (state.tab==='ringkasan') html += renderRingkasanTab(d, f, hasActiveFilters);
+  else if (state.tab==='critical') html += renderCriticalTab(d);
+  else if (state.tab==='bongkar') html += renderBongkarTab();
+  else if (state.tab==='criticalitem') html += renderCriticalItemTab();
+  else if (state.tab==='onproduction') html += renderOnProductionTab();
+  else html += renderUnmatchedTab();
+
+  document.getElementById('app').innerHTML = html;
+  attachEvents();
+
+  if (activeId){
+    const newActive = document.getElementById(activeId);
+    if (newActive){
+      newActive.focus();
+      if (activeSelStart!=null && newActive.setSelectionRange){
+        try { newActive.setSelectionRange(activeSelStart, activeSelStart); } catch(e){}
+      }
+    }
+  }
+}
+
+function attachEvents(){
+  const refreshBtn = document.getElementById('refreshBtn');
+  if (refreshBtn) refreshBtn.onclick = loadData;
+
+  const statusStockUploadBtn = document.getElementById('statusStockUploadBtn');
+  const statusStockFileInput = document.getElementById('statusStockFileInput');
+  if (statusStockUploadBtn && statusStockFileInput){
+    statusStockUploadBtn.onclick = () => statusStockFileInput.click();
+    statusStockFileInput.onchange = (e) => { if (e.target.files[0]) handleStatusStockUpload(e.target.files[0]); };
+  }
+
+  const statusFilterStoreSelect = document.getElementById('statusFilterStoreSelect');
+  if (statusFilterStoreSelect) statusFilterStoreSelect.onchange = (e) => {
+    state.statusFilterStore = e.target.value;
+    state.statusFilterStatusType = ''; // reset jenis status tiap ganti store, biar user pilih ulang sesuai opsi yang tersedia
+    render();
+  };
+
+  const statusFilterStatusTypeSelect = document.getElementById('statusFilterStatusTypeSelect');
+  if (statusFilterStatusTypeSelect) statusFilterStatusTypeSelect.onchange = (e) => {
+    state.statusFilterStatusType = e.target.value;
+    render();
+  };
+
+  const statusOverlayResetBtn = document.getElementById('statusOverlayResetBtn');
+  if (statusOverlayResetBtn) statusOverlayResetBtn.onclick = () => {
+    state.statusFilterStore = '';
+    state.statusFilterStatusType = '';
+    render();
+  };
+
+  const pushStatusStockBtn = document.getElementById('pushStatusStockBtn');
+  if (pushStatusStockBtn) pushStatusStockBtn.onclick = () => { pushStatusStockAsDefault(); };
+
+  document.querySelectorAll('[data-tab]').forEach(el => {
+    el.onclick = () => { state.tab = el.getAttribute('data-tab'); render(); };
+  });
+
+  // --- Ringkasan item ---
+  const searchInput = document.getElementById('searchInput');
+  if (searchInput) searchInput.oninput = (e) => { state.filters.search = e.target.value; render(); };
+
+  ['kain','status'].forEach(key => {
+    const el = document.getElementById('filter'+key.charAt(0).toUpperCase()+key.slice(1));
+    if (el) el.onchange = (e) => { state.filters[key] = e.target.value; render(); };
+  });
+
+  const warnaMsBtn = document.getElementById('warnaMsBtn');
+  if (warnaMsBtn) warnaMsBtn.onclick = (e) => { e.stopPropagation(); state.warnaDropdownOpen = !state.warnaDropdownOpen; render(); };
+
+  document.querySelectorAll('[data-warna-opt]').forEach(el => {
+    el.onclick = (e) => e.stopPropagation();
+    el.onchange = (e) => {
+      const w = el.getAttribute('data-warna-opt');
+      const set = new Set(state.filters.warna);
+      if (e.target.checked) set.add(w); else set.delete(w);
+      state.filters.warna = Array.from(set);
+      render();
+    };
+  });
+
+  if (state.warnaDropdownOpen){
+    const panel = document.getElementById('warnaMsPanel');
+    if (panel) panel.onclick = (e) => e.stopPropagation();
+    setTimeout(() => {
+      document.addEventListener('click', function closeWarnaMs(){
+        state.warnaDropdownOpen = false; render();
+        document.removeEventListener('click', closeWarnaMs);
+      }, { once:true });
+    }, 0);
+  }
+
+  const resetBtn = document.getElementById('resetBtn');
+  if (resetBtn) resetBtn.onclick = () => { state.filters = { search:'', warna:[], kain:'', lengan:'', ukuran:'', status:'' }; state.warnaDropdownOpen=false; render(); };
+
+  const ringkasanSortSelect = document.getElementById('ringkasanSortSelect');
+  if (ringkasanSortSelect) ringkasanSortSelect.onchange = (e) => { state.ringkasanSortMode = e.target.value; render(); };
+
+  document.querySelectorAll('[data-color-toggle]').forEach(el => {
+    el.onclick = () => {
+      const key = el.getAttribute('data-color-toggle');
+      if (state.expandedColor.has(key)) state.expandedColor.delete(key); else state.expandedColor.add(key);
+      render();
+    };
+  });
+  document.querySelectorAll('[data-lengan-toggle]').forEach(el => {
+    el.onclick = () => {
+      const key = el.getAttribute('data-lengan-toggle');
+      if (state.expandedLengan.has(key)) state.expandedLengan.delete(key); else state.expandedLengan.add(key);
+      render();
+    };
+  });
+  document.querySelectorAll('[data-expand]').forEach(el => {
+    el.onclick = () => {
+      const key = el.getAttribute('data-expand');
+      if (state.expandedSet.has(key)) state.expandedSet.delete(key); else state.expandedSet.add(key);
+      render();
+    };
+  });
+
+  // --- Critical & cari koli ---
+  const koliSearchInput = document.getElementById('koliSearchInput');
+  if (koliSearchInput) koliSearchInput.oninput = (e) => { state.koliQuery = e.target.value; render(); };
+
+  const prioritySortSelect = document.getElementById('prioritySortSelect');
+  if (prioritySortSelect) prioritySortSelect.onchange = (e) => { state.priorityMode = e.target.value; render(); };
+
+  const filterTglDelivery = document.getElementById('filterTglDelivery');
+  if (filterTglDelivery) filterTglDelivery.onchange = (e) => { state.tglDeliveryFilter = e.target.value; render(); };
+
+  const filterEstimasiMode = document.getElementById('filterEstimasiMode');
+  if (filterEstimasiMode) filterEstimasiMode.onchange = (e) => { state.estimasiTibaMode = e.target.value; if (e.target.value!=='tanggal') state.estimasiTibaDate=''; render(); };
+
+  const filterEstimasiDate = document.getElementById('filterEstimasiDate');
+  if (filterEstimasiDate) filterEstimasiDate.onchange = (e) => { state.estimasiTibaDate = e.target.value; render(); };
+
+  const resetDateBtn = document.getElementById('resetDateBtn');
+  if (resetDateBtn) resetDateBtn.onclick = () => { state.tglDeliveryFilter=''; state.estimasiTibaMode='semua'; state.estimasiTibaDate=''; state.travelStatusFilter=''; render(); };
+
+  const filterTravelStatus = document.getElementById('filterTravelStatus');
+  if (filterTravelStatus) filterTravelStatus.onchange = (e) => { state.travelStatusFilter = e.target.value; render(); };
+
+  // --- Prioritas Bongkar Inbound ---
+  const bongkarSearchInput = document.getElementById('bongkarSearchInput');
+  if (bongkarSearchInput) bongkarSearchInput.oninput = (e) => { state.bongkarFilters.search = e.target.value; render(); };
+
+  const bongkarWarnaMsBtn = document.getElementById('bongkarWarnaMsBtn');
+  if (bongkarWarnaMsBtn) bongkarWarnaMsBtn.onclick = (e) => { e.stopPropagation(); state.bongkarWarnaDropdownOpen = !state.bongkarWarnaDropdownOpen; render(); };
+
+  document.querySelectorAll('[data-bongkar-warna-opt]').forEach(el => {
+    el.onclick = (e) => e.stopPropagation();
+    el.onchange = (e) => {
+      const w = el.getAttribute('data-bongkar-warna-opt');
+      const set = new Set(state.bongkarFilters.warna);
+      if (e.target.checked) set.add(w); else set.delete(w);
+      state.bongkarFilters.warna = Array.from(set);
+      render();
+    };
+  });
+
+  if (state.bongkarWarnaDropdownOpen){
+    const panel = document.getElementById('bongkarWarnaMsPanel');
+    if (panel) panel.onclick = (e) => e.stopPropagation();
+    setTimeout(() => {
+      document.addEventListener('click', function closeBongkarWarnaMs(){
+        state.bongkarWarnaDropdownOpen = false; render();
+        document.removeEventListener('click', closeBongkarWarnaMs);
+      }, { once:true });
+    }, 0);
+  }
+
+  const bongkarFilterPriority = document.getElementById('bongkarFilterPriority');
+  if (bongkarFilterPriority) bongkarFilterPriority.onchange = (e) => { state.bongkarFilters.priorityLevel = e.target.value; render(); };
+
+  const bongkarFilterEtaMode = document.getElementById('bongkarFilterEtaMode');
+  if (bongkarFilterEtaMode) bongkarFilterEtaMode.onchange = (e) => { state.bongkarFilters.etaMode = e.target.value; if (e.target.value!=='tanggal') state.bongkarFilters.etaDate=''; render(); };
+
+  const bongkarFilterEtaDate = document.getElementById('bongkarFilterEtaDate');
+  if (bongkarFilterEtaDate) bongkarFilterEtaDate.onchange = (e) => { state.bongkarFilters.etaDate = e.target.value; render(); };
+
+  const bongkarFilterShipmentStatus = document.getElementById('bongkarFilterShipmentStatus');
+  if (bongkarFilterShipmentStatus) bongkarFilterShipmentStatus.onchange = (e) => { state.bongkarFilters.shipmentStatus = e.target.value; render(); };
+
+  const bongkarSortSelect = document.getElementById('bongkarSortSelect');
+  if (bongkarSortSelect) bongkarSortSelect.onchange = (e) => { state.bongkarSortMode = e.target.value; render(); };
+
+  const bongkarResetBtn = document.getElementById('bongkarResetBtn');
+  if (bongkarResetBtn) bongkarResetBtn.onclick = () => { state.bongkarFilters = { search:'', warna:[], priorityLevel:'', etaMode:'semua', etaDate:'', shipmentStatus:'', hppStatus:'' }; state.bongkarWarnaDropdownOpen=false; render(); };
+
+  const bongkarFilterHpp = document.getElementById('bongkarFilterHpp');
+  if (bongkarFilterHpp) bongkarFilterHpp.onchange = (e) => { state.bongkarFilters.hppStatus = e.target.value; render(); };
+
+  const bongkarExportBtn = document.getElementById('bongkarExportBtn');
+  if (bongkarExportBtn) bongkarExportBtn.onclick = () => {
+    const db = computeBongkarDerived();
+    exportBongkarXLSX(db.rows);
+  };
+
+  document.querySelectorAll('[data-bongkar-expand]').forEach(el => {
+    el.onclick = () => {
+      const key = el.getAttribute('data-bongkar-expand');
+      if (state.expandedBongkarSet.has(key)) state.expandedBongkarSet.delete(key); else state.expandedBongkarSet.add(key);
+      render();
+    };
+  });
+
+  // --- Critical Item ---
+  const ciFilterStore = document.getElementById('ciFilterStore');
+  if (ciFilterStore) ciFilterStore.onchange = (e) => {
+    state.criticalItemFilters.store = e.target.value === DEFAULT_STORE_KEY ? '' : e.target.value;
+    state.criticalItemFilters.statusType = '';
+    state.criticalItemFilters.statusValue = '';
+    render();
+  };
+
+  const ciFilterStatusType = document.getElementById('ciFilterStatusType');
+  if (ciFilterStatusType) ciFilterStatusType.onchange = (e) => {
+    state.criticalItemFilters.statusType = e.target.value;
+    state.criticalItemFilters.statusValue = '';
+    render();
+  };
+
+  const ciFilterStatusValue = document.getElementById('ciFilterStatusValue');
+  if (ciFilterStatusValue) ciFilterStatusValue.onchange = (e) => { state.criticalItemFilters.statusValue = e.target.value; render(); };
+
+  const ciSearchInput = document.getElementById('ciSearchInput');
+  if (ciSearchInput) ciSearchInput.oninput = (e) => { state.criticalItemFilters.search = e.target.value; render(); };
+
+  const ciWarnaMsBtn = document.getElementById('ciWarnaMsBtn');
+  if (ciWarnaMsBtn) ciWarnaMsBtn.onclick = (e) => { e.stopPropagation(); state.criticalItemWarnaDropdownOpen = !state.criticalItemWarnaDropdownOpen; render(); };
+
+  document.querySelectorAll('[data-ci-warna-opt]').forEach(el => {
+    el.onclick = (e) => e.stopPropagation();
+    el.onchange = (e) => {
+      const w = el.getAttribute('data-ci-warna-opt');
+      const set = new Set(state.criticalItemFilters.warna);
+      if (e.target.checked) set.add(w); else set.delete(w);
+      state.criticalItemFilters.warna = Array.from(set);
+      render();
+    };
+  });
+
+  if (state.criticalItemWarnaDropdownOpen){
+    const panel = document.getElementById('ciWarnaMsPanel');
+    if (panel) panel.onclick = (e) => e.stopPropagation();
+    setTimeout(() => {
+      document.addEventListener('click', function closeCiWarnaMs(){
+        state.criticalItemWarnaDropdownOpen = false; render();
+        document.removeEventListener('click', closeCiWarnaMs);
+      }, { once:true });
+    }, 0);
+  }
+
+  const ciResetBtn = document.getElementById('ciResetBtn');
+  if (ciResetBtn) ciResetBtn.onclick = () => {
+    state.criticalItemFilters.statusValue = '';
+    state.criticalItemFilters.warna = [];
+    state.criticalItemFilters.search = '';
+    state.criticalItemWarnaDropdownOpen = false;
+    render();
+  };
+
+  document.querySelectorAll('[data-ci-color-toggle]').forEach(el => {
+    el.onclick = () => {
+      const key = el.getAttribute('data-ci-color-toggle');
+      if (state.expandedCiColor.has(key)) state.expandedCiColor.delete(key); else state.expandedCiColor.add(key);
+      render();
+    };
+  });
+  document.querySelectorAll('[data-ci-lengan-toggle]').forEach(el => {
+    el.onclick = () => {
+      const key = el.getAttribute('data-ci-lengan-toggle');
+      if (state.expandedCiLengan.has(key)) state.expandedCiLengan.delete(key); else state.expandedCiLengan.add(key);
+      render();
+    };
+  });
+
+  // --- On Production ---
+  const opSearchInput = document.getElementById('opSearchInput');
+  if (opSearchInput) opSearchInput.oninput = (e) => { state.onProductionFilters.search = e.target.value; render(); };
+
+  // --- Item Tidak Cocok ---
+  const umSearchInput = document.getElementById('umSearchInput');
+  if (umSearchInput) umSearchInput.oninput = (e) => { state.unmatchedFilters.search = e.target.value; render(); };
+}
+
+render();
+loadData();
+autoRefreshId = setInterval(loadData, 120000);
+</script>
+</body>
+</html>
