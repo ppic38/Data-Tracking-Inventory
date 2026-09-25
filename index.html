@@ -167,6 +167,11 @@ const UNMATCHED_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQU-u
 // [BARU] Sheet ON PRODUCTION (ditulis oleh Modul 5 -- rekap target cutting/cutting/finish
 // good/reject/wip per item per PO).
 const ON_PRODUCTION_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQU-ufetXrzsotAkisegzFKfx4GZXUA_fPY583_IzBlLCTE3orJ6l5d9F3nIkfKa_mxXVDuNZOvnKdq/pub?gid=1910577045&single=true&output=csv";
+// [BARU] Sheet MASTER ITEM NAME (di file SUMBER PO 2026) -- daftar resmi KATEGORI |
+// WARNA | KEY | ITEM. Dipakai untuk tab "Master Item" (referensi item standar),
+// kolom KEY sengaja TIDAK ditampilkan (cuma data teknis pencocokan nama, bukan
+// untuk dilihat pengguna).
+const MASTER_ITEM_NAME_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTlQDRW49lRPC-hRySDf6kka6L0CHortu3NFIfz_YnUsodf8jH-QWSR3DB2qzW6G9-ga4MhEyGAAEgR/pub?gid=2106938968&single=true&output=csv";
 // [BARU] Sheet "STATUS STOCK" -- sumber DEFAULT status stok per item (kolom: ITEM |
 // KATEGORI | WARNA | LENGAN & SIZE | STATUS), live & auto-termuat TANPA perlu upload file
 // apapun. Ini menggantikan ketergantungan pada upload Excel manual untuk melihat status
@@ -542,6 +547,13 @@ let state = {
   masterItems: [], // array of { itemName, attrs }
   // [BARU] Drill-down per baris koli di tab Prioritas Bongkar Inbound (key: item::po::koli)
   expandedBongkarSet: new Set(),
+  // [BARU] Tab "Master Item" -- daftar resmi KATEGORI/WARNA/ITEM dari sheet MASTER ITEM
+  // NAME (file SUMBER PO 2026), murni referensi (bukan data tracking).
+  masterItemNameRows: [], // { kategori, warna, item }
+  masterItemNameLoadError: null,
+  masterItemFilters: { search:'', kategori:'' },
+  expandedMasterKategori: new Set(),
+  expandedMasterWarna: new Set(),
 };
 let autoRefreshId = null;
 
@@ -796,6 +808,37 @@ async function loadMasterItems(){
   }
 }
 
+// [BARU] Normalisasi 1 baris dari sheet MASTER ITEM NAME (file SUMBER PO 2026):
+// KATEGORI | WARNA | KEY | ITEM. Kolom KEY sengaja TIDAK diambil -- itu cuma data
+// teknis pencocokan nama, bukan untuk ditampilkan ke pengguna.
+function normalizeMasterItemNameRow(row){
+  const get = (key) => {
+    const k = Object.keys(row).find(kk => kk.trim().toUpperCase()===key);
+    return k ? row[k] : '';
+  };
+  return {
+    kategori: toText(get('KATEGORI')),
+    warna: toText(get('WARNA')),
+    item: toText(get('ITEM')),
+  };
+}
+
+// [BARU] Ambil daftar resmi KATEGORI/WARNA/ITEM dari sheet MASTER ITEM NAME (file
+// SUMBER PO 2026), untuk tab "Master Item". Dipanggil terpisah dari loadData()
+// supaya kalau gagal (mis. sheet belum di-publish), tab lain tetap jalan normal.
+async function loadMasterItemNameList(){
+  try{
+    const res = await fetch(MASTER_ITEM_NAME_CSV_URL + '&_cb=' + Date.now());
+    if (!res.ok) throw new Error('status ' + res.status);
+    const text = await res.text();
+    const parsed = Papa.parse(text, { header:true, skipEmptyLines:true });
+    state.masterItemNameRows = parsed.data.map(normalizeMasterItemNameRow).filter(r => r.item);
+    state.masterItemNameLoadError = null;
+  }catch(e){
+    state.masterItemNameLoadError = 'Gagal memuat sheet MASTER ITEM NAME -- pastikan sheet-nya sudah di-publish ke web.';
+  }
+}
+
 // [BARU] Ambil daftar item yang GAGAL dipetakan ke Master Item Name (sheet UNMATCHED
 // ITEMS, ditulis oleh Modul 5). Dipanggil terpisah dari loadData() supaya kalau gagal
 // (mis. sheet belum di-publish/gid belum diisi), tab lain tetap jalan normal.
@@ -890,6 +933,7 @@ async function loadData(){
     await loadStatusStockDefault();
     await loadUnmatchedItems();
     await loadOnProduction();
+    if (state.masterItemNameRows.length === 0) await loadMasterItemNameList();
     await syncDefaultStatusMarkerFromServer();
   }catch(e){
     state.error = (e && e.message) || 'Gagal memuat data.';
@@ -1848,6 +1892,113 @@ function renderUnmatchedTab(){
   return html;
 }
 
+// [BARU] Tab "Master Item" -- referensi resmi KATEGORI/WARNA/ITEM dari sheet MASTER
+// ITEM NAME (file SUMBER PO 2026). Murni daftar referensi, BUKAN data tracking --
+// tidak ada QTY/WIP/dsb, cuma dikelompokkan Kategori > Warna > Item supaya gampang
+// dicari. Kolom KEY dari sheet aslinya sengaja tidak ditampilkan sama sekali.
+function computeMasterItemDerived(){
+  const f = state.masterItemFilters;
+  const q = f.search.trim().toLowerCase();
+  const kategoriOptions = Array.from(new Set(state.masterItemNameRows.map(r=>r.kategori).filter(Boolean))).sort();
+
+  let rows = state.masterItemNameRows;
+  if (f.kategori) rows = rows.filter(r => r.kategori === f.kategori);
+  if (q) rows = rows.filter(r => r.item.toLowerCase().includes(q) || r.warna.toLowerCase().includes(q));
+
+  const kategoriMap = new Map();
+  rows.forEach(r => {
+    const kat = r.kategori || '(Tanpa kategori)';
+    if (!kategoriMap.has(kat)) kategoriMap.set(kat, { kategori:kat, warnaMap:new Map(), itemCount:0 });
+    const kg = kategoriMap.get(kat);
+    kg.itemCount++;
+    const warna = r.warna || '(Tanpa warna)';
+    if (!kg.warnaMap.has(warna)) kg.warnaMap.set(warna, { warna, items:[] });
+    kg.warnaMap.get(warna).items.push(r);
+  });
+  const kategoriGroups = Array.from(kategoriMap.values()).map(kg => {
+    const warnaGroups = Array.from(kg.warnaMap.values()).map(wg => {
+      const sortedItems = wg.items.slice().sort((a,b)=>a.item.localeCompare(b.item));
+      return { ...wg, items: sortedItems };
+    }).sort((a,b)=>a.warna.localeCompare(b.warna));
+    return { ...kg, warnaGroups, warnaCount: warnaGroups.length };
+  }).sort((a,b)=>a.kategori.localeCompare(b.kategori));
+
+  return { rows, kategoriOptions, kategoriGroups, total: state.masterItemNameRows.length };
+}
+
+function renderMasterItemTab(){
+  const md = computeMasterItemDerived();
+  const f = state.masterItemFilters;
+  const hasActiveFilters = Boolean(f.search) || Boolean(f.kategori);
+
+  let html = `<div class="filter-bar">
+    <div class="search-wrap"><span class="icon">&#128269;</span>
+      <input id="masterSearchInput" placeholder="Cari nama item atau warna..." value="${esc(f.search)}" />
+    </div>
+    <select class="control" id="masterFilterKategori"><option value="">Semua kategori</option>${md.kategoriOptions.map(k=>`<option value="${esc(k)}" ${f.kategori===k?'selected':''}>${esc(k)}</option>`).join('')}</select>
+    ${hasActiveFilters?`<button class="reset-btn" id="masterResetBtn">&times; Reset</button>`:''}
+  </div>`;
+
+  html += `<div class="metrics-grid">
+    ${metricCard(ICONS.package,'Total item master',md.total)}
+    ${metricCard(ICONS.package,'Kategori',md.kategoriOptions.length)}
+  </div>`;
+
+  if (state.masterItemNameLoadError){
+    html += `<div class="error-banner">${ICONS.warn} ${esc(state.masterItemNameLoadError)}</div>`;
+  }
+
+  html += `<div class="result-count">Menampilkan ${md.rows.length} dari ${md.total} item &middot; dikelompokkan jadi ${md.kategoriGroups.length} kategori</div>`;
+
+  if (state.loading && state.masterItemNameRows.length===0 && !state.masterItemNameLoadError){
+    html += `<div class="empty-state"><div class="spin" style="font-size:26px;">&#8635;</div><div>Memuat data...</div></div>`;
+    return html;
+  }
+  if (md.kategoriGroups.length===0){
+    html += `<div class="empty-state">${f.search||f.kategori ? 'Tidak ada yang cocok dengan filter.' : 'Belum ada data Master Item.'}</div>`;
+    return html;
+  }
+
+  html += `<div class="item-list">` + md.kategoriGroups.map(kg => {
+    const kategoriOpen = state.expandedMasterKategori.has(kg.kategori);
+    return `<div class="color-group">
+      <div class="color-group-head" data-master-kategori-toggle="${esc(kg.kategori)}">
+        <div class="item-main">
+          <div class="item-name">${esc(kg.kategori)}</div>
+          <div class="item-sub">${kg.warnaCount} warna &middot; ${kg.itemCount} item</div>
+        </div>
+        <span class="chev">${kategoriOpen?'&#9660;':'&#9654;'}</span>
+      </div>
+      ${kategoriOpen ? kg.warnaGroups.map(wg => {
+        const warnaKey = kg.kategori+'::'+wg.warna;
+        const warnaOpen = state.expandedMasterWarna.has(warnaKey);
+        return `<div class="lengan-group">
+          <div class="lengan-group-head" data-master-warna-toggle="${esc(warnaKey)}">
+            ${swatchHtml(wg.warna)}
+            <div class="item-main">
+              <div class="item-name" style="font-size:12px;">${esc(wg.warna)}</div>
+              <div class="item-sub">${wg.items.length} item</div>
+            </div>
+            <span class="chev">${warnaOpen?'&#9660;':'&#9654;'}</span>
+          </div>
+          ${warnaOpen ? `<div class="size-list">` + wg.items.map(r => {
+            const attrs = parseItemName(r.item);
+            return `<div class="size-row-head">
+              <div class="item-main">
+                <div class="item-name" style="font-size:12px;">${esc(attrs.ukuran||'-')}</div>
+                <div class="item-tags">${attrs.lengan?`<span class="tag">${esc(attrs.lengan)}</span>`:''}</div>
+              </div>
+              <div class="item-sub" style="flex-shrink:0;max-width:320px;">${esc(r.item)}</div>
+            </div>`;
+          }).join('') + `</div>` : ''}
+        </div>`;
+      }).join('') : ''}
+    </div>`;
+  }).join('') + `</div>`;
+
+  return html;
+}
+
 function renderDefaultStatusMarkerBanner(){
   if (!state.defaultStatusMarker) return '';
   const m = state.defaultStatusMarker;
@@ -1895,7 +2046,7 @@ function render(){
   const f = state.filters;
   const hasActiveFilters = Boolean(f.search) || f.warna.length>0 || Boolean(f.kain) || Boolean(f.status);
   const activeId = document.activeElement ? document.activeElement.id : null;
-  const activeSelStart = ['searchInput','koliSearchInput','bongkarSearchInput','ciSearchInput','opSearchInput','umSearchInput'].includes(activeId) && document.activeElement.selectionStart!=null
+  const activeSelStart = ['searchInput','koliSearchInput','bongkarSearchInput','ciSearchInput','opSearchInput','umSearchInput','masterSearchInput'].includes(activeId) && document.activeElement.selectionStart!=null
     ? document.activeElement.selectionStart : null;
 
   const dbForCount = computeBongkarDerived();
@@ -1928,16 +2079,18 @@ function render(){
       <button class="tab-btn ${state.tab==='unmatched'?'active':''}" data-tab="unmatched">
         Item tidak cocok ${umForCount.total>0?`<span class="tab-count">${umForCount.total}</span>`:''}
       </button>
+      <button class="tab-btn ${state.tab==='masteritem'?'active':''}" data-tab="masteritem">Master item</button>
     </div>
   `;
 
-  if (state.tab !== 'criticalitem' && state.tab !== 'unmatched' && state.tab !== 'onproduction') html += renderStatusStockFilterBar();
+  if (state.tab !== 'criticalitem' && state.tab !== 'unmatched' && state.tab !== 'onproduction' && state.tab !== 'masteritem') html += renderStatusStockFilterBar();
 
   if (state.tab==='ringkasan') html += renderRingkasanTab(d, f, hasActiveFilters);
   else if (state.tab==='critical') html += renderCriticalTab(d);
   else if (state.tab==='bongkar') html += renderBongkarTab();
   else if (state.tab==='criticalitem') html += renderCriticalItemTab();
   else if (state.tab==='onproduction') html += renderOnProductionTab();
+  else if (state.tab==='masteritem') html += renderMasterItemTab();
   else html += renderUnmatchedTab();
 
   document.getElementById('app').innerHTML = html;
@@ -2218,6 +2371,31 @@ function attachEvents(){
   // --- Item Tidak Cocok ---
   const umSearchInput = document.getElementById('umSearchInput');
   if (umSearchInput) umSearchInput.oninput = (e) => { state.unmatchedFilters.search = e.target.value; render(); };
+
+  // --- Master Item ---
+  const masterSearchInput = document.getElementById('masterSearchInput');
+  if (masterSearchInput) masterSearchInput.oninput = (e) => { state.masterItemFilters.search = e.target.value; render(); };
+
+  const masterFilterKategori = document.getElementById('masterFilterKategori');
+  if (masterFilterKategori) masterFilterKategori.onchange = (e) => { state.masterItemFilters.kategori = e.target.value; render(); };
+
+  const masterResetBtn = document.getElementById('masterResetBtn');
+  if (masterResetBtn) masterResetBtn.onclick = () => { state.masterItemFilters = { search:'', kategori:'' }; render(); };
+
+  document.querySelectorAll('[data-master-kategori-toggle]').forEach(el => {
+    el.onclick = () => {
+      const key = el.getAttribute('data-master-kategori-toggle');
+      if (state.expandedMasterKategori.has(key)) state.expandedMasterKategori.delete(key); else state.expandedMasterKategori.add(key);
+      render();
+    };
+  });
+  document.querySelectorAll('[data-master-warna-toggle]').forEach(el => {
+    el.onclick = () => {
+      const key = el.getAttribute('data-master-warna-toggle');
+      if (state.expandedMasterWarna.has(key)) state.expandedMasterWarna.delete(key); else state.expandedMasterWarna.add(key);
+      render();
+    };
+  });
 }
 
 render();

@@ -847,13 +847,20 @@ function detectReportHarianColumns2_(sheet, dataValues, itemHeaderRow) {
   const cuttingBanner = findBannerSpan('HASIL CUTTING') || findBannerSpan('CUTTING');
   if (cuttingBanner) {
     Logger.log('Banner CUTTING ditemukan di baris ' + cuttingBanner.row + ', kolom ' + cuttingBanner.colStart + '-' + cuttingBanner.colEnd);
-    // Cari kandidat dari KEDUA kata kunci -- beberapa file cuma punya "TOTAL" (per grup,
-    // merged) TANPA "TOTAL PER SIZE" sama sekali, dan "QTY" itulah yang per-baris asli.
-    // Jangan asumsikan "TOTAL" otomatis benar kalau cuma ketemu 1 kandidat -- selalu
-    // verifikasi lewat status merge di pickPerRowColumn_.
+    // [FIX] Cari kandidat dari KEDUA kata kunci. PENTING: coba "TOTAL" (termasuk
+    // "TOTAL PER SIZE") DULU, baru "QTY" -- karena section ini biasanya punya
+    // BEBERAPA kolom QTY per tanggal (satu per hari cutting), sementara nilai
+    // per-baris yang BENAR (dijumlah lintas semua tanggal) ada di kolom
+    // "TOTAL PER SIZE". Kalau QTY dicoba duluan, kode bisa salah ambil qty
+    // SATU TANGGAL SAJA (mis. cuma hari pertama) -- ke-verifikasi kejadian
+    // nyata di kasus HIJAU ARMY 24S PDK 4XL: cutting asli 81 (kolom TOTAL PER
+    // SIZE), tapi ke-detect 0 karena kepilih kolom QTY tanggal pertama yang
+    // kebetulan kosong untuk baris itu. Tetap verifikasi lewat status merge di
+    // pickPerRowColumn_ (bukan asumsi buta), QTY tetap jadi fallback kalau
+    // section-nya memang tidak punya kolom TOTAL PER SIZE/TOTAL sama sekali.
     const candidatesTotal = collectSubHeaderColumns_(dataValues, cuttingBanner.row, cuttingBanner.colStart, cuttingBanner.colEnd, 'TOTAL', 6);
     const candidatesQty = collectSubHeaderColumns_(dataValues, cuttingBanner.row, cuttingBanner.colStart, cuttingBanner.colEnd, 'QTY', 6);
-    const candidates = candidatesQty.concat(candidatesTotal); // QTY duluan -- biasanya itu yang per-baris
+    const candidates = candidatesTotal.concat(candidatesQty); // [FIX] TOTAL duluan, QTY jadi fallback
     Logger.log('Kandidat kolom CUTTING (QTY+TOTAL): ' + JSON.stringify(candidates));
     result.cuttingCol = pickPerRowColumn_(sheet, candidates, sampleDataRow);
   } else {
@@ -865,8 +872,8 @@ function detectReportHarianColumns2_(sheet, dataValues, itemHeaderRow) {
   if (fgBanner) {
     const candidatesTotal = collectSubHeaderColumns_(dataValues, fgBanner.row, fgBanner.colStart, fgBanner.colEnd, 'TOTAL', 6);
     const candidatesQty = collectSubHeaderColumns_(dataValues, fgBanner.row, fgBanner.colStart, fgBanner.colEnd, 'QTY', 6);
-    const candidates = candidatesQty.concat(candidatesTotal);
-    Logger.log('Kandidat kolom FINISH GOOD (QTY+TOTAL): ' + JSON.stringify(candidates));
+    const candidates = candidatesTotal.concat(candidatesQty); // [FIX] TOTAL duluan, sama seperti CUTTING
+    Logger.log('Kandidat kolom FINISH GOOD (TOTAL+QTY): ' + JSON.stringify(candidates));
     result.finishGoodCol = pickPerRowColumn_(sheet, candidates, sampleDataRow);
   }
 
@@ -875,8 +882,8 @@ function detectReportHarianColumns2_(sheet, dataValues, itemHeaderRow) {
   if (rejectBanner) {
     const candidatesTotal = collectSubHeaderColumns_(dataValues, rejectBanner.row, rejectBanner.colStart, rejectBanner.colEnd, 'TOTAL', 6);
     const candidatesQty = collectSubHeaderColumns_(dataValues, rejectBanner.row, rejectBanner.colStart, rejectBanner.colEnd, 'QTY', 6);
-    const candidates = candidatesQty.concat(candidatesTotal);
-    Logger.log('Kandidat kolom REJECT (QTY+TOTAL): ' + JSON.stringify(candidates));
+    const candidates = candidatesTotal.concat(candidatesQty); // [FIX] TOTAL duluan, sama seperti CUTTING
+    Logger.log('Kandidat kolom REJECT (TOTAL+QTY): ' + JSON.stringify(candidates));
     result.rejectCol = pickPerRowColumn_(sheet, candidates, sampleDataRow);
   }
 
@@ -2035,6 +2042,12 @@ const CONFIG_MODUL5 = {
   UNMATCHED_SHEET_NAME: 'UNMATCHED ITEMS',
   REJECT_SHEET_NAME: 'DATA REJECT',
   ON_PRODUCTION_SHEET_NAME: 'ON PRODUCTION',
+  // [BARU] Item/PO yang produksinya sudah TUTUP (tidak ada lagi yg diproses) DAN
+  // semua koli yg pernah dikirim sudah TERFULFILL (tidak ada yg masih di jalan),
+  // tapi qtyPO tidak pernah tercapai penuh -- selisihnya dicatat di sini sebagai
+  // YIELD LOSS, BUKAN ditampilkan sebagai WIP aktif di DATA TRACKING (lihat
+  // prosesSatuPO_ -- arahan user 25/9/2026).
+  YIELD_LOSS_SHEET_NAME: 'YIELD LOSS',
   STATUS_CRITICAL_SHEET_NAME: 'STATUS STOCK', // [BARU v3] sheet ini sekarang 5 kolom: ITEM | KATEGORI | WARNA | LENGAN & SIZE | STATUS
   AUTO_REFRESH_INTERVAL_HOURS: 3,
   ESTIMASI_TIBA_TAMBAH_HARI: 7,
@@ -2208,6 +2221,40 @@ function buildIntransitMatchCandidates_(nomorPO) {
   return [nomorPO];
 }
 
+// [BARU] Teks penanda status "sudah selesai total" di kolom STATUS KUMPULAN PO --
+// PO dengan status ini dilewati (tidak dibuka lagi) di loadDaftarPO_(), dan ini
+// juga nilai yang dituliskan otomatis oleh tandaiPOSelesaiJikaPerlu_().
+const STATUS_PO_SELESAI_TEXT = 'SELESAI';
+const STATUS_PO_HEADER_TEXT = 'STATUS';
+
+/**
+ * [BARU] Cari baris header KUMPULAN PO secara dinamis -- JANGAN asumsikan
+ * selalu baris pertama, karena beberapa sheet (mis. SUMBER PO 2026) punya
+ * baris kosong dulu sebelum header aslinya (header "PO"/"NOMOR PO" ternyata
+ * ada di baris ke-2, bukan baris ke-1). Cari baris pertama yang kolom A-nya
+ * "PO" atau "NOMOR PO". Kalau tidak ketemu sama sekali, fallback ke baris 0
+ * (0-indexed) supaya tetap ada sesuatu yang dikembalikan.
+ */
+function cariBarisHeaderKumpulanPO_(data) {
+  for (let r = 0; r < data.length; r++) {
+    const kolomA = normalizeText_(data[r][0]);
+    if (kolomA === 'PO' || kolomA === 'NOMOR PO') return r; // 0-indexed
+  }
+  return 0;
+}
+
+/**
+ * [BARU] Cari kolom "STATUS" di baris header KUMPULAN PO (kalau ada -- opsional,
+ * fitur auto-skip/auto-tandai PO selesai tetap aman dilewati kalau kolom ini
+ * belum pernah dibuat manual oleh user).
+ */
+function cariKolomStatusPO_(headerRowValues) {
+  for (let c = 0; c < headerRowValues.length; c++) {
+    if (normalizeText_(headerRowValues[c]) === STATUS_PO_HEADER_TEXT) return c; // 0-indexed
+  }
+  return -1;
+}
+
 function loadDaftarPO_() {
   const ss = SpreadsheetApp.openByUrl(CONFIG_MODUL5.KUMPULAN_PO_SHEET_URL);
   const sheet = findSheetByPartialName_(ss, CONFIG_MODUL5.KUMPULAN_PO_SHEET_NAME);
@@ -2216,8 +2263,16 @@ function loadDaftarPO_() {
   }
 
   const data = sheet.getDataRange().getValues();
+  // [BARU] kolom STATUS dicari di baris header ASLI (dicari dinamis, BUKAN
+  // selalu baris pertama -- lihat cariBarisHeaderKumpulanPO_), opsional --
+  // kalau user belum bikin kolom "STATUS", statusCol = -1 dan semua PO
+  // diperlakukan seperti biasa (tidak ada yang di-skip berdasarkan status).
+  const barisHeader = cariBarisHeaderKumpulanPO_(data);
+  const statusCol = data.length > 0 ? cariKolomStatusPO_(data[barisHeader]) : -1;
+
   const daftar = [];
   let dilewati = 0;
+  let dilewatiKarenaSelesai = 0;
 
   for (let r = 1; r < data.length; r++) {
     const nomorPO = data[r][0];
@@ -2239,6 +2294,16 @@ function loadDaftarPO_() {
       dilewati++;
       continue;
     }
+    // [BARU] Kalau kolom STATUS ada isinya "SELESAI", PO ini dilewati -- tidak
+    // dibuka lagi sama sekali. Kalau user mau PO ini diproses ulang, tinggal
+    // kosongkan manual sel STATUS-nya.
+    if (statusCol !== -1) {
+      const statusVal = normalizeText_(data[r][statusCol]);
+      if (statusVal === STATUS_PO_SELESAI_TEXT) {
+        dilewatiKarenaSelesai++;
+        continue;
+      }
+    }
 
     // [BARU v3] PO REG dan RIB TIDAK DIGABUNG lagi di sini -- masing-masing
     // tetap jadi 1 entri PO independen, diproses terpisah (lihat
@@ -2249,8 +2314,47 @@ function loadDaftarPO_() {
   if (dilewati > 0) {
     Logger.log('Total baris dilewati dari KUMPULAN PO: ' + dilewati);
   }
+  if (dilewatiKarenaSelesai > 0) {
+    Logger.log('Total PO dilewati karena sudah ditandai "' + STATUS_PO_SELESAI_TEXT + '": ' + dilewatiKarenaSelesai);
+  }
 
   return daftar;
+}
+
+/**
+ * [BARU] Kalau hasil proses 1 PO menghasilkan 0 baris di DATA TRACKING (artinya
+ * semua item-nya sudah produksiTutup DAN semua koli sudah TERFULFILL -- lihat
+ * prosesSatuPO_), tandai PO itu "SELESAI" di kolom STATUS KUMPULAN PO, supaya
+ * run berikutnya tidak perlu buka sheet PO ini lagi. Aman dipanggil berkali-kali
+ * (idempotent) dan tidak melakukan apa-apa kalau kolom STATUS belum dibuat user.
+ */
+function tandaiPOSelesaiJikaPerlu_(nomorPO, jumlahBarisHasil) {
+  if (jumlahBarisHasil > 0) return; // masih ada yg perlu ditracking -- jangan ditandai selesai
+
+  try {
+    const ss = SpreadsheetApp.openByUrl(CONFIG_MODUL5.KUMPULAN_PO_SHEET_URL);
+    const sheet = findSheetByPartialName_(ss, CONFIG_MODUL5.KUMPULAN_PO_SHEET_NAME);
+    if (!sheet) return;
+
+    const data = sheet.getDataRange().getValues();
+    if (data.length === 0) return;
+    const statusCol = cariKolomStatusPO_(data[cariBarisHeaderKumpulanPO_(data)]); // 0-indexed
+    if (statusCol === -1) return; // kolom STATUS belum dibuat user -- lewati diam-diam
+
+    const targetNorm = normalizeText_(nomorPO);
+    for (let r = 1; r < data.length; r++) {
+      if (normalizeText_(String(data[r][0])) === targetNorm) {
+        const sudahSelesai = normalizeText_(data[r][statusCol]) === STATUS_PO_SELESAI_TEXT;
+        if (!sudahSelesai) {
+          sheet.getRange(r + 1, statusCol + 1).setValue(STATUS_PO_SELESAI_TEXT);
+          Logger.log('  [SELESAI] PO "' + nomorPO + '" ditandai "' + STATUS_PO_SELESAI_TEXT + '" di KUMPULAN PO (0 baris dihasilkan).');
+        }
+        return; // ketemu barisnya, tidak perlu lanjut scan
+      }
+    }
+  } catch (e) {
+    Logger.log('  [WARNING] Gagal menandai PO "' + nomorPO + '" sebagai selesai: ' + e.message);
+  }
 }
 
 /**
@@ -2262,6 +2366,7 @@ function prosesSatuPO_(nomorPO, linkSheet, masterData, intransitData, statusStok
   const rejectRows = [];
   const rejectTrackingRows = [];
   const onProductionRows = [];
+  const yieldLossRows = []; // [BARU] item selesai (semua terfulfill) tapi qtyPO tak tercapai penuh
 
   const itemMap = new Map();
 
@@ -2363,11 +2468,19 @@ function prosesSatuPO_(nomorPO, linkSheet, masterData, intransitData, statusStok
   });
 
   itemMap.forEach(function (agg, itemName) {
-    let wipFinal = Math.max(0, agg.qtyPO - (agg.finishGood + agg.reject));
-
-    if (agg.cutting > 0 && agg.cutting === (agg.finishGood + agg.reject)) {
-      wipFinal = 0;
-    }
+    // [FIX] wipMentah = selisih target vs hasil SEBELUM di-nol-kan oleh status
+    // "produksi tutup" -- dipakai KHUSUS untuk hitung YIELD LOSS, supaya selisih
+    // itu tidak ikut hilang waktu wipFinal di-paksa 0 di bawah (bug sebelumnya:
+    // syarat YIELD LOSS salah pakai wipFinal yang SUDAH di-nol-kan, jadi tidak
+    // pernah kesampaian sama sekali).
+    const wipMentah = Math.max(0, agg.qtyPO - (agg.finishGood + agg.reject));
+    // produksiTutup = TRUE kalau semua yang sudah dipotong (cutting) sudah selesai
+    // diproses (jadi finish good atau reject) -- tidak ada lagi yg "nyangkut" di
+    // tengah jalur produksi. Kalau qtyPO/target masih belum tercapai padahal
+    // produksi sudah tutup, selisihnya (wipMentah) adalah YIELD permanen, BUKAN
+    // WIP aktif lagi.
+    const produksiTutup = agg.cutting > 0 && agg.cutting === (agg.finishGood + agg.reject);
+    let wipFinal = produksiTutup ? 0 : wipMentah;
 
     if (agg.qtyPO !== 0 || agg.finishGood !== 0 || agg.reject !== 0) {
       const koliList = agg.koliEntries.map(function (ce) { return ce.koli; });
@@ -2385,6 +2498,31 @@ function prosesSatuPO_(nomorPO, linkSheet, masterData, intransitData, statusStok
     }
 
     const koliBelumSelesai = agg.koliEntries.filter(function (ce) { return ce.status !== 'TERFULFILL'; });
+
+    // [FIX -- arahan user 25/9/2026, direvisi] Sinyal yg menentukan "masih
+    // berjalan" itu status PRODUKSI (produksiTutup), BUKAN status pengiriman.
+    // Ini supaya kasus KIRIM BERANGSUR aman: walau sebagian sudah dikirim &
+    // sudah TERFULFILL, selama produksinya SENDIRI belum tutup (masih ada yg
+    // diproses), WIP-nya tetap nyata dan barisnya tetap tampil.
+    //
+    //  - produksiTutup === false (masih ada yg diproses)  -> WIP nyata, TAMPIL
+    //    (tidak peduli status pengiriman apapun -- baru dikirim, kirim
+    //    sebagian, atau belum kirim sama sekali).
+    //  - produksiTutup === true (tidak ada lagi yg diproses) DAN wipMentah > 0
+    //    -> selisihnya YIELD permanen -> JANGAN tampil di DATA TRACKING,
+    //    catat ke YIELD LOSS saja (LEPAS dari status pengiriman -- kalaupun
+    //    belum sempat dikirim sama sekali, barang itu memang TIDAK PERNAH ADA,
+    //    jadi tetap yield, bukan "masih berjalan").
+    if (produksiTutup && wipMentah !== 0) {
+      yieldLossRows.push({
+        itemName: itemName,
+        nomorPO: nomorPO,
+        qtyPO: agg.qtyPO,
+        totalTerfulfill: agg.koliEntries.filter(function (ce) { return ce.status === 'TERFULFILL'; })
+          .reduce(function (sum, ce) { return sum + ce.qty; }, 0),
+        selisihYield: wipMentah
+      });
+    }
 
     if (koliBelumSelesai.length > 0) {
       koliBelumSelesai.forEach(function (ce) {
@@ -2410,7 +2548,12 @@ function prosesSatuPO_(nomorPO, linkSheet, masterData, intransitData, statusStok
           statusHpp: statusHppStr
         });
       });
-    } else if (wipFinal !== 0) {
+    } else if (!produksiTutup && wipFinal !== 0) {
+      // [FIX] Syaratnya sekarang produksi BELUM tutup (bukan lagi "belum pernah
+      // kirim") -- menangani kasus kirim berangsur: sebagian sudah TERFULFILL,
+      // tapi produksinya sendiri masih jalan, jadi WIP ini tetap nyata. Kalau
+      // produksi sudah tutup, sisa WIP-nya sudah ditangani di atas (YIELD LOSS),
+      // tidak masuk sini lagi.
       rows.push({
         itemName: itemName,
         nomorPO: nomorPO,
@@ -2455,7 +2598,7 @@ function prosesSatuPO_(nomorPO, linkSheet, masterData, intransitData, statusStok
     });
   });
 
-  return { rows: rows, unmatchedRows: unmatchedRows, rejectRows: rejectRows, onProductionRows: onProductionRows };
+  return { rows: rows, unmatchedRows: unmatchedRows, rejectRows: rejectRows, onProductionRows: onProductionRows, yieldLossRows: yieldLossRows };
 }
 
 /**
@@ -2509,6 +2652,8 @@ function updateDataTracking() {
       appendKeSheetUnmatched_(hasil.unmatchedRows);
       appendKeSheetReject_(hasil.rejectRows);
       appendKeSheetOnProduction_(hasil.onProductionRows);
+      appendKeSheetYieldLoss_(hasil.yieldLossRows);
+      tandaiPOSelesaiJikaPerlu_(po.nomorPO, hasil.rows.length);
     } catch (e) {
       Logger.log('  [ERROR] Gagal total proses PO "' + po.nomorPO + '": ' + e.message);
       errorPOs.push({ po: po.nomorPO, error: e.message });
@@ -2593,8 +2738,11 @@ function tulisHeaderSaja_() {
   setup(CONFIG_MODUL5.UNMATCHED_SHEET_NAME, ['NOMOR PO', 'NOMOR KOLI', 'ITEM (gagal mapping)', 'QTY', 'CATATAN'], '#FF9999');
   setup(CONFIG_MODUL5.REJECT_SHEET_NAME, ['ITEM NAME', 'NOMOR PO', 'NOMOR KOLI', 'QTY REJECT'], '#FFCC99');
   setup(CONFIG_MODUL5.ON_PRODUCTION_SHEET_NAME, ['ITEM', 'NOMOR PO', 'TARGET CUTTING', 'CUTTING', 'FINISH GOOD', 'REJECT', 'WIP', 'KOLI'], '#C9DAF8');
+  // [BARU] YIELD LOSS -- item yg produksinya sudah tutup & semua koli sudah
+  // TERFULFILL, tapi qtyPO tidak pernah tercapai penuh. Lihat prosesSatuPO_.
+  setup(CONFIG_MODUL5.YIELD_LOSS_SHEET_NAME, ['ITEM NAME', 'NOMOR PO', 'QTY PO', 'TOTAL TERFULFILL', 'SELISIH (YIELD)'], '#D9D2E9');
 
-  Logger.log('Header sheet DATA TRACKING / UNMATCHED ITEMS / DATA REJECT / ON PRODUCTION sudah disiapkan.');
+  Logger.log('Header sheet DATA TRACKING / UNMATCHED ITEMS / DATA REJECT / ON PRODUCTION / YIELD LOSS sudah disiapkan.');
 }
 
 function appendKeSheetOutput_(rows) {
@@ -2617,6 +2765,20 @@ function appendKeSheetOnProduction_(onProductionRows) {
 
   const dataToWrite = onProductionRows.map(function (r) {
     return [r.itemName, r.nomorPO, r.targetCutting, r.cutting, r.finishGood, r.reject, r.wip, r.koli];
+  });
+
+  const startRow = sheet.getLastRow() + 1;
+  sheet.getRange(startRow, 1, dataToWrite.length, dataToWrite[0].length).setValues(dataToWrite);
+}
+
+function appendKeSheetYieldLoss_(yieldLossRows) {
+  if (yieldLossRows.length === 0) return;
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(CONFIG_MODUL5.YIELD_LOSS_SHEET_NAME);
+  if (!sheet) return;
+
+  const dataToWrite = yieldLossRows.map(function (r) {
+    return [r.itemName, r.nomorPO, r.qtyPO, r.totalTerfulfill, r.selisihYield];
   });
 
   const startRow = sheet.getLastRow() + 1;
@@ -2759,11 +2921,14 @@ function updateSatuPO_(nomorPOTarget) {
   hapusBarisUntukPO_(CONFIG_MODUL5.UNMATCHED_SHEET_NAME, 1, po.nomorPO);
   hapusBarisUntukPO_(CONFIG_MODUL5.REJECT_SHEET_NAME, 2, po.nomorPO);
   hapusBarisUntukPO_(CONFIG_MODUL5.ON_PRODUCTION_SHEET_NAME, 2, po.nomorPO);
+  hapusBarisUntukPO_(CONFIG_MODUL5.YIELD_LOSS_SHEET_NAME, 2, po.nomorPO);
 
   appendKeSheetOutput_(hasil.rows);
   appendKeSheetUnmatched_(hasil.unmatchedRows);
   appendKeSheetReject_(hasil.rejectRows);
   appendKeSheetOnProduction_(hasil.onProductionRows);
+  appendKeSheetYieldLoss_(hasil.yieldLossRows);
+  tandaiPOSelesaiJikaPerlu_(po.nomorPO, hasil.rows.length);
 
   ss.toast('Selesai! PO "' + po.nomorPO + '" sudah di-update (' + hasil.rows.length + ' baris).', '✅ Update PO Tertentu', 8);
   SpreadsheetApp.getUi().alert('Selesai!\n\nPO: ' + po.nomorPO + '\n' + hasil.rows.length + ' baris DATA TRACKING\n' + hasil.unmatchedRows.length + ' item gagal mapping\n' + hasil.rejectRows.length + ' baris reject');
