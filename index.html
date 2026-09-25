@@ -450,9 +450,12 @@ function normalizeRow(row){
     hpp:toText(get('STATUS HPP')),
   };
 }
-// [BARU] Kelas badge untuk status HPP (ADA HPP / BELUM ADA HPP).
+// [BARU] Kelas badge untuk status HPP (ADA HPP / BELUM ADA HPP / CEK HPP -- yang
+// terakhir ini dari gabungan sinyal DASHBOARD+INTRANSIT yang tidak sepakat, jadi
+// dikasih warna "perlu perhatian" tersendiri, beda dari BELUM ADA HPP).
 function hppBadgeClass(hpp){
   const h = (hpp||'').toUpperCase();
+  if (h.includes('CEK')) return 'badge badge-crit2';
   if (h.includes('BELUM')) return 'badge badge-critical';
   if (h.includes('ADA')) return 'badge badge-over';
   return 'badge badge-neutral';
@@ -1527,6 +1530,7 @@ function renderBongkarTab(){
         <option value="">Semua</option>
         <option value="ADA HPP" ${fb.hppStatus==='ADA HPP'?'selected':''}>Ada HPP</option>
         <option value="BELUM ADA HPP" ${fb.hppStatus==='BELUM ADA HPP'?'selected':''}>Belum ada HPP</option>
+        <option value="CEK HPP" ${fb.hppStatus==='CEK HPP'?'selected':''}>Cek HPP (perlu manual)</option>
       </select>
       ${hasActiveBongkarFilters?`<button class="reset-btn" id="bongkarResetBtn">&times; Reset filter</button>`:''}
     </div>
