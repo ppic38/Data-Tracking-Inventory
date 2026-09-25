@@ -1982,13 +1982,10 @@ function renderMasterItemTab(){
             <span class="chev">${warnaOpen?'&#9660;':'&#9654;'}</span>
           </div>
           ${warnaOpen ? `<div class="size-list">` + wg.items.map(r => {
-            const attrs = parseItemName(r.item);
             return `<div class="size-row-head">
               <div class="item-main">
-                <div class="item-name" style="font-size:12px;">${esc(attrs.ukuran||'-')}</div>
-                <div class="item-tags">${attrs.lengan?`<span class="tag">${esc(attrs.lengan)}</span>`:''}</div>
+                <div class="item-name" style="font-size:12px;">${esc(r.item)}</div>
               </div>
-              <div class="item-sub" style="flex-shrink:0;max-width:320px;">${esc(r.item)}</div>
             </div>`;
           }).join('') + `</div>` : ''}
         </div>`;
