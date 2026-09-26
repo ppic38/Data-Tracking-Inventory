@@ -1738,33 +1738,67 @@ function loadIntransitData_() {
 }
 
 /**
- * Cari entry PO di data INTRANSIT yang PALING COCOK dengan nomor PO
- * (pencocokan prefix dua arah, ambil overlap terpanjang).
+ * [BARU -- arahan user 26/9/2026, ganti total metode lama] Pecah 1 nomor PO
+ * jadi 3 bagian yang PERANNYA BEDA saat dicocokkan:
+ *   1. vendorCode -- huruf di depan (mis. "GI", "CC", "KK").
+ *   2. numbers    -- angka TEPAT setelah kode vendor, boleh gabungan pakai
+ *                    "/" atau "." (mis. "30/34" -> [30,34], "35" -> [35]).
+ *                    Ini angka PO yang boleh "salah satu cocok saja" -- buat
+ *                    kasus kirim gabungan (mis. PO 30 & 34 dikirim bareng,
+ *                    tercatat "GI30/34" di satu sisi tapi "GI34" di sisi lain).
+ *   3. rest       -- SISANYA APA ADANYA (tanggal, "-01"/"-02", REG/RIB, dll),
+ *                    cuma dibuang simbolnya -- TIDAK BOLEH diotak-atik lagi,
+ *                    supaya "GI36-23SEPT2026-01" tidak pernah ketuker sama
+ *                    "GI36-23SEPT2026-02" (itu 2 PO BEDA, bukan gabungan).
+ *
+ * Metode lama (prefix dua arah, ambil overlap terpanjang) DIBUANG karena
+ * gampang salah nyantol ke PO lain yang sekadar mirip sepotong teks, dan
+ * susah ditelusuri manual kalau salah.
+ */
+function parsePOStructured_(poRaw) {
+  const norm = normalizeText_(poRaw);
+  const m = norm.match(/^([A-Z]+)([0-9./]*)(.*)$/);
+  if (!m) return { vendorCode: '', numbers: [], rest: stripNonAlnum_(norm) };
+
+  const vendorCode = m[1];
+  const numbers = (m[2] || '')
+    .split(/[/.]/)
+    .map(function (s) { return s.trim(); })
+    .filter(function (s) { return s !== ''; })
+    .map(function (s) { return parseInt(s, 10); })
+    .filter(function (n) { return !isNaN(n); });
+
+  return { vendorCode: vendorCode, numbers: numbers, rest: stripNonAlnum_(m[3] || '') };
+}
+
+/**
+ * [BARU] Cocokkan 2 nomor PO pakai aturan terstruktur di atas: kode vendor
+ * HARUS sama, "sisanya" (tanggal+part+REG/RIB) HARUS sama persis, dan cukup
+ * SATU angka PO yang sama di antara daftar angka kedua sisi.
+ */
+function poStructuredMatch_(targetRaw, candidateRaw) {
+  const t = parsePOStructured_(targetRaw);
+  const c = parsePOStructured_(candidateRaw);
+
+  if (!t.vendorCode || t.vendorCode !== c.vendorCode) return false;
+  if (t.rest !== c.rest) return false;
+  if (t.numbers.length === 0 || c.numbers.length === 0) return false;
+
+  return t.numbers.some(function (n) { return c.numbers.indexOf(n) !== -1; });
+}
+
+/**
+ * Cari entry PO di data INTRANSIT yang cocok dengan nomor PO (metode
+ * terstruktur -- lihat poStructuredMatch_).
  */
 function findBestMatchingPO_(intransitData, fullPOCode) {
-  const target = stripNonAlnum_(fullPOCode);
-  if (!target) return null;
-
-  let bestMatch = null;
-  let bestLength = -1;
-
+  if (!fullPOCode) return null;
   for (let i = 0; i < intransitData.length; i++) {
-    const candidate = intransitData[i].matchKey;
-    if (!candidate) continue;
-
-    const isPrefixForward = target.indexOf(candidate) === 0;
-    const isPrefixBackward = !isPrefixForward && candidate.indexOf(target) === 0;
-
-    if (isPrefixForward || isPrefixBackward) {
-      const overlapLength = Math.min(candidate.length, target.length);
-      if (overlapLength > bestLength) {
-        bestLength = overlapLength;
-        bestMatch = intransitData[i];
-      }
+    if (poStructuredMatch_(fullPOCode, intransitData[i].nomorPORaw)) {
+      return intransitData[i];
     }
   }
-
-  return bestMatch;
+  return null;
 }
 
 /**
@@ -1892,9 +1926,9 @@ function loadHppStatusData_() {
 }
 
 /**
- * Cari 1 entri di sebuah daftar {matchKey,...} yang paling cocok dengan salah
- * satu kandidat nomor PO (pencocokan prefix dua arah, overlap terpanjang).
- * Dipakai untuk sisi DASHBOARD maupun sisi INTRANSIT pada getHppStatusGabungan_.
+ * Cari 1 entri di sebuah daftar {nomorPORaw,...} yang cocok dengan salah satu
+ * kandidat nomor PO (metode terstruktur -- lihat poStructuredMatch_). Dipakai
+ * untuk sisi DASHBOARD maupun sisi INTRANSIT pada getHppStatusGabungan_.
  */
 function findBestMatchGeneric_(daftar, candidatePOs) {
   const uniqueCandidates = (candidatePOs || [])
@@ -1903,20 +1937,9 @@ function findBestMatchGeneric_(daftar, candidatePOs) {
     .filter(function (c, idx, arr) { return arr.indexOf(c) === idx; });
 
   for (let i = 0; i < uniqueCandidates.length; i++) {
-    const target = stripNonAlnum_(uniqueCandidates[i]);
-    if (!target) continue;
-    let bestMatch = null, bestLength = -1;
-    for (let j = 0; j < daftar.length; j++) {
-      const candidate = daftar[j].matchKey;
-      if (!candidate) continue;
-      const isPrefixForward = target.indexOf(candidate) === 0;
-      const isPrefixBackward = !isPrefixForward && candidate.indexOf(target) === 0;
-      if (isPrefixForward || isPrefixBackward) {
-        const overlapLength = Math.min(candidate.length, target.length);
-        if (overlapLength > bestLength) { bestLength = overlapLength; bestMatch = daftar[j]; }
-      }
-    }
-    if (bestMatch) return { match: bestMatch, matchedUsing: uniqueCandidates[i] };
+    const kandidat = uniqueCandidates[i];
+    const match = daftar.find(function (d) { return poStructuredMatch_(kandidat, d.nomorPORaw); });
+    if (match) return { match: match, matchedUsing: kandidat };
   }
   return { match: null, matchedUsing: null };
 }
