@@ -1340,9 +1340,14 @@ function parseSuratJalanNewSheet_(sheet, dataValues, masterData) {
   for (let i = 0; i < blockWidth; i++) {
     const raw = koliHeaderTexts[i];
     if (raw === null || raw === undefined || String(raw).trim() === '') continue;
+    // [FIX -- arahan user 26/9/2026] Sumber data kadang menulis embel-embel
+    // seperti "KOLI 1", padahal yang dibutuhkan cuma angkanya saja (1).
+    // Ambil angka pertamanya; kalau memang tidak ada angka sama sekali
+    // (label non-numerik), baru pakai teks aslinya sebagai fallback.
+    const angkaKoli = extractKoliNumber_(raw);
     koliCols.push({
       offset: i,
-      nomorKoli: String(raw).trim(), // TEKS APA ADANYA -- dipakai utk kolom NOMOR KOLI output
+      nomorKoli: angkaKoli !== null ? String(angkaKoli) : String(raw).trim(),
       isReject: isWarnaRejectSJNew_(koliHeaderBg[i]),
     });
   }
@@ -1931,6 +1936,14 @@ function getHppStatusGabungan_(hppData, intransitData, candidatePOs) {
   let status;
   if (dashAda === true && ketHpp === true) status = 'ADA HPP';
   else if (dashAda === false && ketHpp === false) status = 'BELUM ADA HPP';
+  // [FIX -- arahan user 26/9/2026] PO yang TIDAK KETEMU SAMA SEKALI di DUA-DUANYA
+  // (dashAda===null DAN ketHpp===null) itu BUKAN "dua sinyal bertentangan" -- itu
+  // cuma PO yang belum pernah tersentuh di kedua sheet (biasanya PO yang masih
+  // sangat baru). Kalau belum ada baris HPP maupun catatan pengiriman sama sekali,
+  // itu jelas BELUM ADA HPP, bukan sesuatu yang perlu dicek manual.
+  else if (dashAda === null && ketHpp === null) status = 'BELUM ADA HPP';
+  // Sisanya (satu sumber bilang true, sumber lain bilang false atau tidak
+  // ketemu) baru benar-benar butuh dicek manual.
   else status = 'CEK HPP';
 
   return {
