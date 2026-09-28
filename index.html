@@ -22,7 +22,24 @@
   }
   *{ box-sizing:border-box; }
   body{ margin:0; font-family:'Inter',sans-serif; color:var(--ink); background:var(--bg); }
-  .dash-root{ max-width:1020px; margin:0 auto; padding:28px 20px 60px; }
+  .dash-root{ padding:0; }
+  .dash-shell{ display:flex; align-items:flex-start; }
+  .sidebar{ width:230px; flex:0 0 230px; background:var(--surface); border-right:1px solid var(--line);
+    padding:24px 14px; position:sticky; top:0; align-self:flex-start; height:100vh; overflow-y:auto; }
+  .sidebar-eyebrow{ font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:.12em; color:var(--accent);
+    font-weight:600; padding:0 10px; margin-bottom:2px; }
+  .sidebar-title{ font-family:'Space Grotesk',sans-serif; font-weight:700; font-size:15px; padding:0 10px; margin:0 0 20px; line-height:1.3; }
+  .main-content{ flex:1; min-width:0; max-width:1020px; padding:28px 24px 60px; }
+  @media (max-width:760px){
+    .dash-shell{ flex-direction:column; }
+    .sidebar{ width:100%; flex:none; position:static; height:auto; border-right:none;
+      border-bottom:1px solid var(--line); padding:12px 10px; }
+    .sidebar-eyebrow, .sidebar-title{ display:none; }
+    .sidebar .tabs{ flex-direction:row; overflow-x:auto; }
+    .sidebar .tab-btn{ white-space:nowrap; border-left:none; border-bottom:2px solid transparent; margin-right:6px; }
+    .sidebar .tab-btn.active{ border-left-color:transparent; }
+    .main-content{ padding:20px 16px 50px; }
+  }
   .eyebrow{ font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.12em; color:var(--accent); font-weight:600; }
   .title{ font-family:'Space Grotesk',sans-serif; font-size:24px; font-weight:700; margin:2px 0 0; }
   .dash-header{ display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap; margin-bottom:16px; }
@@ -40,11 +57,13 @@
   @keyframes spin{ to{ transform:rotate(360deg); } }
   .error-banner{ display:flex; gap:8px; align-items:center; background:var(--critical-bg); color:var(--critical-fg);
     font-size:13px; padding:10px 12px; border-radius:8px; margin-bottom:12px; }
-  .tabs{ display:flex; gap:6px; border-bottom:1px solid var(--line); margin-bottom:16px; flex-wrap:wrap; }
+  .tabs{ display:flex; flex-direction:column; gap:2px; }
   .tab-btn{ font-size:13.5px; font-weight:600; color:var(--ink-soft); background:none; border:none;
-    padding:9px 4px; cursor:pointer; border-bottom:2px solid transparent; display:flex; align-items:center;
-    gap:7px; margin-right:14px; font-family:'Inter',sans-serif; }
-  .tab-btn.active{ color:var(--accent); border-bottom-color:var(--accent); }
+    border-left:3px solid transparent; padding:10px 10px; cursor:pointer; display:flex; align-items:center;
+    justify-content:space-between; gap:7px; width:100%; text-align:left; border-radius:6px;
+    font-family:'Inter',sans-serif; }
+  .tab-btn:hover{ background:var(--bg); }
+  .tab-btn.active{ color:var(--accent); background:var(--accent-soft); border-left-color:var(--accent); }
   .tab-count{ background:var(--critical-strong); color:#fff; font-size:10.5px; font-weight:700;
     padding:1px 6px; border-radius:20px; font-family:'IBM Plex Mono',monospace; }
   .metrics-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:9px; margin-bottom:16px; }
@@ -2049,20 +2068,9 @@ function render(){
   const dbForCount = computeBongkarDerived();
   const umForCount = computeUnmatchedDerived();
 
-  let html = `
-    <div class="dash-header">
-      <div>
-        <div class="eyebrow">GARMENT INVENTORY OPS</div>
-        <h1 class="title">Data tracking stock dari vendor ke DC</h1>
-      </div>
-      <div class="header-actions">
-        ${state.lastUpdated ? `<span class="updated-at">Update: ${state.lastUpdated.toLocaleTimeString('id-ID')}</span>` : ''}
-        <input type="file" id="statusStockFileInput" accept=".xlsx,.xls" style="display:none" />
-        <button class="upload-btn" id="statusStockUploadBtn">&#128202; Upload Status Stock</button>
-        <button class="refresh-btn" id="refreshBtn" ${state.loading?'disabled':''}><span class="${state.loading?'spin':''}">&#8635;</span> ${state.loading?'Memuat':'Refresh'}</button>
-      </div>
-    </div>
-    ${state.error ? `<div class="error-banner">${ICONS.warn} ${esc(state.error)} Pastikan sheet masih ter-publish ke web dan Anda buka file ini lewat browser (bukan dari dalam Claude).</div>` : ''}
+  const navHtml = `
+    <div class="sidebar-eyebrow">GARMENT INVENTORY OPS</div>
+    <h1 class="sidebar-title">Data tracking stock dari vendor ke DC</h1>
     <div class="tabs">
       <button class="tab-btn ${state.tab==='ringkasan'?'active':''}" data-tab="ringkasan">Ringkasan item</button>
       <button class="tab-btn ${state.tab==='critical'?'active':''}" data-tab="critical">
@@ -2080,6 +2088,18 @@ function render(){
     </div>
   `;
 
+  let html = `
+    <div class="dash-header">
+      <div class="header-actions" style="margin-left:auto;">
+        ${state.lastUpdated ? `<span class="updated-at">Update: ${state.lastUpdated.toLocaleTimeString('id-ID')}</span>` : ''}
+        <input type="file" id="statusStockFileInput" accept=".xlsx,.xls" style="display:none" />
+        <button class="upload-btn" id="statusStockUploadBtn">&#128202; Upload Status Stock</button>
+        <button class="refresh-btn" id="refreshBtn" ${state.loading?'disabled':''}><span class="${state.loading?'spin':''}">&#8635;</span> ${state.loading?'Memuat':'Refresh'}</button>
+      </div>
+    </div>
+    ${state.error ? `<div class="error-banner">${ICONS.warn} ${esc(state.error)} Pastikan sheet masih ter-publish ke web dan Anda buka file ini lewat browser (bukan dari dalam Claude).</div>` : ''}
+  `;
+
   if (state.tab !== 'criticalitem' && state.tab !== 'unmatched' && state.tab !== 'onproduction' && state.tab !== 'masteritem') html += renderStatusStockFilterBar();
 
   if (state.tab==='ringkasan') html += renderRingkasanTab(d, f, hasActiveFilters);
@@ -2090,7 +2110,12 @@ function render(){
   else if (state.tab==='masteritem') html += renderMasterItemTab();
   else html += renderUnmatchedTab();
 
-  document.getElementById('app').innerHTML = html;
+  document.getElementById('app').innerHTML = `
+    <div class="dash-shell">
+      <aside class="sidebar">${navHtml}</aside>
+      <div class="main-content">${html}</div>
+    </div>
+  `;
   attachEvents();
 
   if (activeId){
