@@ -1738,27 +1738,36 @@ function loadIntransitData_() {
 }
 
 /**
- * [BARU -- arahan user 26/9/2026, ganti total metode lama] Pecah 1 nomor PO
- * jadi 3 bagian yang PERANNYA BEDA saat dicocokkan:
- *   1. vendorCode -- huruf di depan (mis. "GI", "CC", "KK").
+ * [BARU v2 -- arahan user 28/9/2026, sederhanakan total] TANGGAL SUDAH TIDAK
+ * IKUT DIBANDINGKAN SAMA SEKALI -- cuma dekorasi, identitas PO sudah cukup
+ * unik dari vendor+angka+suffix(+batchTag GI). Pecah 1 nomor PO jadi:
+ *   1. vendorCode -- huruf di depan (mis. "GI", "CC", "KK", "BY").
  *   2. numbers    -- angka TEPAT setelah kode vendor, boleh gabungan pakai
- *                    "/" atau "." (mis. "30/34" -> [30,34], "35" -> [35]).
- *                    Ini angka PO yang boleh "salah satu cocok saja" -- buat
- *                    kasus kirim gabungan (mis. PO 30 & 34 dikirim bareng,
- *                    tercatat "GI30/34" di satu sisi tapi "GI34" di sisi lain).
- *   3. rest       -- SISANYA APA ADANYA (tanggal, "-01"/"-02", REG/RIB, dll),
- *                    cuma dibuang simbolnya -- TIDAK BOLEH diotak-atik lagi,
- *                    supaya "GI36-23SEPT2026-01" tidak pernah ketuker sama
- *                    "GI36-23SEPT2026-02" (itu 2 PO BEDA, bukan gabungan).
- *
- * Metode lama (prefix dua arah, ambil overlap terpanjang) DIBUANG karena
- * gampang salah nyantol ke PO lain yang sekadar mirip sepotong teks, dan
- * susah ditelusuri manual kalau salah.
+ *                    "/" atau "." (mis. "31/34" -> [31,34], "35" -> [35]).
+ *                    Cukup SATU angka yang sama saat dibandingkan -- buat
+ *                    kasus kirim gabungan (PO 31 & 34 dikirim bareng, kadang
+ *                    di INTRANSIT cuma tercatat salah satu, mis. "BY34" saja).
+ *   3. suffix     -- REG/RIB/TUNIK/KID, dicari di sisa teks (biasanya di
+ *                    ujung). null kalau tidak disebutkan sama sekali (mis.
+ *                    kode singkat "BY34" tanpa keterangan apapun).
+ *   4. batchTag   -- KHUSUS vendor GI (YOGI): angka 1-2 digit TEPAT SEBELUM
+ *                    suffix (mis. "...-01 REG" -> "01"). Ini pembeda WAJIB
+ *                    utk GI (GI36-...-01 dan GI36-...-02 dianggap PO/vendor
+ *                    yg beda sama sekali). Vendor lain tidak punya konsep
+ *                    ini (selalu null).
  */
+const CONFIG_PO_SUFFIX = {
+  KNOWN_SUFFIXES: ['REG', 'RIB', 'TUNIK', 'KID'],
+  // [BARU] kalau kode di INTRANSIT tidak sebut REG/RIB/TUNIK/KID sama sekali
+  // (mis. cuma "BY34" polos), dianggap REG -- arahan user: kode singkat tanpa
+  // keterangan lain default-nya batch REG, BUKAN CEK/ambigu.
+  DEFAULT_SUFFIX: 'REG',
+};
+
 function parsePOStructured_(poRaw) {
   const norm = normalizeText_(poRaw);
   const m = norm.match(/^([A-Z]+)([0-9./]*)(.*)$/);
-  if (!m) return { vendorCode: '', numbers: [], rest: stripNonAlnum_(norm) };
+  if (!m) return { vendorCode: '', numbers: [], suffix: null, batchTag: null };
 
   const vendorCode = m[1];
   const numbers = (m[2] || '')
@@ -1768,23 +1777,50 @@ function parsePOStructured_(poRaw) {
     .map(function (s) { return parseInt(s, 10); })
     .filter(function (n) { return !isNaN(n); });
 
-  return { vendorCode: vendorCode, numbers: numbers, rest: stripNonAlnum_(m[3] || '') };
+  const restTokens = (m[3] || '').match(/[0-9]+|[A-Z]+/g) || [];
+  let suffix = null;
+  let suffixIdx = -1;
+  for (let i = restTokens.length - 1; i >= 0; i--) {
+    if (CONFIG_PO_SUFFIX.KNOWN_SUFFIXES.indexOf(restTokens[i]) !== -1) {
+      suffix = restTokens[i];
+      suffixIdx = i;
+      break;
+    }
+  }
+
+  let batchTag = null;
+  if (vendorCode === 'GI' && suffixIdx > 0) {
+    const before = restTokens[suffixIdx - 1];
+    if (/^[0-9]{1,2}$/.test(before)) batchTag = before;
+  }
+
+  return { vendorCode: vendorCode, numbers: numbers, suffix: suffix, batchTag: batchTag };
 }
 
 /**
- * [BARU] Cocokkan 2 nomor PO pakai aturan terstruktur di atas: kode vendor
- * HARUS sama, "sisanya" (tanggal+part+REG/RIB) HARUS sama persis, dan cukup
- * SATU angka PO yang sama di antara daftar angka kedua sisi.
+ * [BARU v2] Cocokkan 2 nomor PO: vendor harus sama, minimal 1 angka PO yang
+ * sama, batchTag GI (kalau ada) harus sama persis, dan suffix (REG/RIB/
+ * TUNIK/KID) harus sama -- KECUALI sisi INTRANSIT tidak menyebut suffix sama
+ * sekali, dianggap REG (lihat CONFIG_PO_SUFFIX.DEFAULT_SUFFIX). Kalau PO
+ * targetnya sendiri memang tidak punya konsep suffix (mis. "MKS26" polos),
+ * suffix tidak ikut dicek sama sekali.
  */
 function poStructuredMatch_(targetRaw, candidateRaw) {
   const t = parsePOStructured_(targetRaw);
   const c = parsePOStructured_(candidateRaw);
 
   if (!t.vendorCode || t.vendorCode !== c.vendorCode) return false;
-  if (t.rest !== c.rest) return false;
   if (t.numbers.length === 0 || c.numbers.length === 0) return false;
+  if (!t.numbers.some(function (n) { return c.numbers.indexOf(n) !== -1; })) return false;
 
-  return t.numbers.some(function (n) { return c.numbers.indexOf(n) !== -1; });
+  if (t.vendorCode === 'GI' && t.batchTag !== c.batchTag) return false;
+
+  if (t.suffix !== null) {
+    const efektifSuffixCandidate = c.suffix !== null ? c.suffix : CONFIG_PO_SUFFIX.DEFAULT_SUFFIX;
+    if (t.suffix !== efektifSuffixCandidate) return false;
+  }
+
+  return true;
 }
 
 /**
