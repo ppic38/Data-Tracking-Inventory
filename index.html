@@ -29,7 +29,8 @@
   .sidebar-eyebrow{ font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:.12em; color:var(--accent);
     font-weight:600; padding:0 10px; margin-bottom:2px; }
   .sidebar-title{ font-family:'Space Grotesk',sans-serif; font-weight:700; font-size:15px; padding:0 10px; margin:0 0 20px; line-height:1.3; }
-  .main-content{ flex:1; min-width:0; max-width:1020px; padding:28px 24px 60px; }
+  .main-content{ flex:1; min-width:0; padding:28px 24px 60px; }
+  .main-inner{ max-width:1020px; margin:0 auto; }
   @media (max-width:760px){
     .dash-shell{ flex-direction:column; }
     .sidebar{ width:100%; flex:none; position:static; height:auto; border-right:none;
@@ -256,19 +257,21 @@ function statusClass(status){
 }
 // [BARU] Label Prioritas Bongkar Inbound -- DITURUNKAN LANGSUNG dari STATUS TOTAL STOK
 // yang sudah ada (Critical Lvl 3 -> High, Lvl 2 -> Medium, Lvl 1 -> Low). BUKAN input manual.
-// Status selain 3 level critical ini (NORMAL/OVER STOCK) dianggap TIDAK relevan untuk
-// prioritas bongkar, jadi dikembalikan null (disaring keluar dari tab ini).
+// [UPDATE -- arahan user 30/9/2026] Status selain 3 level critical ini (NORMAL/OVER STOCK/
+// lainnya) SEKARANG dilabel "Not Urgent" (bukan lagi disaring keluar dari tab) -- supaya
+// semua item tetap kelihatan di tab ini, cuma dikelompokkan sebagai paling tidak mendesak.
 function bongkarPriorityLabel(status){
   const p = statusPriority(status);
   if (p===0) return 'High';
   if (p===1) return 'Medium';
   if (p===2) return 'Low';
-  return null;
+  return 'Not Urgent';
 }
 function bongkarPriorityBadgeClass(label){
   if (label==='High') return 'badge badge-critical';
   if (label==='Medium') return 'badge badge-crit2';
   if (label==='Low') return 'badge badge-crit1';
+  if (label==='Not Urgent') return 'badge badge-neutral';
   return 'badge badge-neutral';
 }
 
@@ -533,7 +536,7 @@ let state = {
   ringkasanSortMode: '',
   // [BARU] Filter urutan Prioritas Bongkar Inbound ('prioritas' = default, atau field_dir)
   bongkarSortMode: 'prioritas',
-  bongkarFilters:{ search:'', warna:[], priorityLevel:'', etaMode:'semua', etaDate:'', shipmentStatus:'', hppStatus:'' },
+  bongkarFilters:{ search:'', warna:[], priorityLevel:'', etaMode:'semua', etaDate:'', shipmentStatus:'', hppStatus:'', travelStatus:'INTRANSIT' },
   bongkarWarnaDropdownOpen:false,
   // [BARU] Tab "Critical Item" -- default-nya menampilkan STATUS TOTAL STOK baseline dari
   // DATA TRACKING (store = DEFAULT_STORE_KEY), TANPA perlu upload file Status Stock dulu.
@@ -1113,8 +1116,9 @@ function computeDerived(){
 }
 
 // [BARU] Data untuk tab "Prioritas Bongkar Inbound" -- SAMA sumbernya dengan Critical &
-// cari koli (per-koli dari DATA TRACKING), TAPI disaring HANYA yang statusnya Critical
-// Lvl 1/2/3 (dilabel ulang jadi Low/Medium/High), tidak ada NORMAL/OVER STOCK di sini.
+// cari koli (per-koli dari DATA TRACKING). Critical Lvl 1/2/3 dilabel ulang jadi
+// Low/Medium/High, dan SISANYA (NORMAL/OVER STOCK/lainnya) dilabel "Not Urgent" -- semua
+// tetap tampil di tab ini (lihat bongkarPriorityLabel), bukan disaring keluar.
 function computeBongkarDerived(){
   const parsedRows = getParsedRows();
   let rows = parsedRows.filter(r => (r.nomorKoli || r.tanggalKirim) && bongkarPriorityLabel(r.status));
@@ -1137,6 +1141,13 @@ function computeBongkarDerived(){
   if (f.priorityLevel){
     rows = rows.filter(r => bongkarPriorityLabel(r.status) === f.priorityLevel);
   }
+  // [BARU] Filter posisi fisik koli: ON DELIVERY (masih di jalan, belum tercatat di
+  // INTRANSIT) / INTRANSIT (sudah tercatat, checkbox belum TERFULFILL) / SEMUA.
+  // Default-nya INTRANSIT -- arahan user: yang paling relevan buat dibongkar duluan
+  // adalah yang sudah pasti ada di gudang forwarder (INTRANSIT), bukan yang masih
+  // dalam perjalanan dari vendor (ON DELIVERY).
+  if (f.travelStatus === 'ON_DELIVERY') rows = rows.filter(r => r.onDelivery > 0);
+  else if (f.travelStatus === 'INTRANSIT') rows = rows.filter(r => r.intransit > 0);
   // [BARU] Filter status perjalanan: Tepat waktu (termasuk "sudah sampai"), Belum sampai, Terlambat
   if (f.shipmentStatus){
     rows = rows.filter(r => computeShipmentStatus(r.estimasiTiba, r.intransit) === f.shipmentStatus);
@@ -1531,16 +1542,18 @@ function renderCriticalTab(d){
 function renderBongkarTab(){
   const db = computeBongkarDerived();
   const fb = state.bongkarFilters;
-  const hasActiveBongkarFilters = Boolean(fb.search) || fb.warna.length>0 || Boolean(fb.priorityLevel) || fb.etaMode!=='semua' || Boolean(fb.shipmentStatus) || Boolean(fb.hppStatus);
+  const hasActiveBongkarFilters = Boolean(fb.search) || fb.warna.length>0 || Boolean(fb.priorityLevel) || fb.etaMode!=='semua' || Boolean(fb.shipmentStatus) || Boolean(fb.hppStatus) || fb.travelStatus!=='INTRANSIT';
 
   const countHigh = db.rows.filter(r=>bongkarPriorityLabel(r.status)==='High').length;
   const countMedium = db.rows.filter(r=>bongkarPriorityLabel(r.status)==='Medium').length;
   const countLow = db.rows.filter(r=>bongkarPriorityLabel(r.status)==='Low').length;
+  const countNotUrgent = db.rows.filter(r=>bongkarPriorityLabel(r.status)==='Not Urgent').length;
 
   let html = `<div class="metrics-grid">
     ${metricCard(ICONS.warn,'High priority',countHigh,'critical')}
     ${metricCard(ICONS.clock,'Medium priority',countMedium)}
     ${metricCard(ICONS.check,'Low priority',countLow)}
+    ${metricCard(ICONS.check,'Not urgent',countNotUrgent)}
     ${metricCard(ICONS.package,'Total baris tampil',db.rows.length)}
     ${metricCard(ICONS.warn,'Belum ada HPP',db.belumHppCount,db.belumHppCount>0?'critical':undefined)}
   </div>`;
@@ -1569,6 +1582,12 @@ function renderBongkarTab(){
         <option value="High" ${fb.priorityLevel==='High'?'selected':''}>High (Critical Lvl 3)</option>
         <option value="Medium" ${fb.priorityLevel==='Medium'?'selected':''}>Medium (Critical Lvl 2)</option>
         <option value="Low" ${fb.priorityLevel==='Low'?'selected':''}>Low (Critical Lvl 1)</option>
+        <option value="Not Urgent" ${fb.priorityLevel==='Not Urgent'?'selected':''}>Not Urgent (Normal/Over stock)</option>
+      </select>
+      <select class="control" id="bongkarFilterTravelStatus">
+        <option value="INTRANSIT" ${fb.travelStatus==='INTRANSIT'?'selected':''}>Intransit</option>
+        <option value="ON_DELIVERY" ${fb.travelStatus==='ON_DELIVERY'?'selected':''}>On delivery</option>
+        <option value="" ${fb.travelStatus===''?'selected':''}>Semua</option>
       </select>
     </div>
     <div class="filter-bar-row">
@@ -2113,7 +2132,7 @@ function render(){
   document.getElementById('app').innerHTML = `
     <div class="dash-shell">
       <aside class="sidebar">${navHtml}</aside>
-      <div class="main-content">${html}</div>
+      <div class="main-content"><div class="main-inner">${html}</div></div>
     </div>
   `;
   attachEvents();
@@ -2283,6 +2302,9 @@ function attachEvents(){
   const bongkarFilterPriority = document.getElementById('bongkarFilterPriority');
   if (bongkarFilterPriority) bongkarFilterPriority.onchange = (e) => { state.bongkarFilters.priorityLevel = e.target.value; render(); };
 
+  const bongkarFilterTravelStatus = document.getElementById('bongkarFilterTravelStatus');
+  if (bongkarFilterTravelStatus) bongkarFilterTravelStatus.onchange = (e) => { state.bongkarFilters.travelStatus = e.target.value; render(); };
+
   const bongkarFilterEtaMode = document.getElementById('bongkarFilterEtaMode');
   if (bongkarFilterEtaMode) bongkarFilterEtaMode.onchange = (e) => { state.bongkarFilters.etaMode = e.target.value; if (e.target.value!=='tanggal') state.bongkarFilters.etaDate=''; render(); };
 
@@ -2296,7 +2318,7 @@ function attachEvents(){
   if (bongkarSortSelect) bongkarSortSelect.onchange = (e) => { state.bongkarSortMode = e.target.value; render(); };
 
   const bongkarResetBtn = document.getElementById('bongkarResetBtn');
-  if (bongkarResetBtn) bongkarResetBtn.onclick = () => { state.bongkarFilters = { search:'', warna:[], priorityLevel:'', etaMode:'semua', etaDate:'', shipmentStatus:'', hppStatus:'' }; state.bongkarWarnaDropdownOpen=false; render(); };
+  if (bongkarResetBtn) bongkarResetBtn.onclick = () => { state.bongkarFilters = { search:'', warna:[], priorityLevel:'', etaMode:'semua', etaDate:'', shipmentStatus:'', hppStatus:'', travelStatus:'INTRANSIT' }; state.bongkarWarnaDropdownOpen=false; render(); };
 
   const bongkarFilterHpp = document.getElementById('bongkarFilterHpp');
   if (bongkarFilterHpp) bongkarFilterHpp.onchange = (e) => { state.bongkarFilters.hppStatus = e.target.value; render(); };
